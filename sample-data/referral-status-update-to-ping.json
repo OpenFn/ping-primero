@@ -1,0 +1,20 @@
+{
+	"ShippingProcessId": "SHP-2284",
+	"InteropId": "INT-1436",
+	"Data": [
+		{
+			"ExternalId": "12345",
+			"Attachments": [],
+			"Fields": [
+				{
+					"Name": "progres_interoperabilityreferralid",  // Key field to identify the referral
+					"Value": "2785b477-767d-4814-949a-be8e0990bcc8"
+				},
+				{
+					"Name": "progres_comments",  // the field we are updating
+					"Value": "Add here a comment for the Referral record in proGres"
+				}
+			]
+		}
+	]
+}
