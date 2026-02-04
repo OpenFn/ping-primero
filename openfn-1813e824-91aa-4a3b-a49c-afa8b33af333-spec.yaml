@@ -1,0 +1,1358 @@
+name: primero-ping
+description: |
+  Primero - PING integration for UNICEF-UNHCR collaboration
+collections: null
+credentials:
+  hunter@openfn.org-Official-Ping-credentials:
+    name: Official Ping credentials
+    owner: hunter@openfn.org
+  hunter@openfn.org-PING-Credentials:
+    name: PING Credentials
+    owner: hunter@openfn.org
+  hunter@openfn.org-Primero-PING:
+    name: Primero PING
+    owner: hunter@openfn.org
+  rediet@openfn.org-Ping-Credential-Rediet:
+    name: Ping Credential Rediet
+    owner: rediet@openfn.org
+  rediet@openfn.org-Primero-Gambella:
+    name: Primero Gambella
+    owner: rediet@openfn.org
+workflows:
+  Copy-Flow1-1.-Send-Referrals-to-Primero:
+    name: Copy Flow1-1. Send Referrals to Primero
+    jobs:
+      Retrieve-pending-referrals:
+        name: Retrieve pending referrals
+        adaptor: '@openfn/language-ping@1.0.0'
+        credential: hunter@openfn.org-Official-Ping-credentials
+        body: |
+          
+          http.post('/primes/fetch/paging/v3/retrievedatawithpaging', {
+          	"ShippingProcessId": "SHP-2747", // Retrieve referral records from proGres deliveries table, interventions, individuals
+          	"PartnerId": "PNR-1363",
+          	"InteropID": "INT-1436",
+              "APIVersion": "V3",
+          	"QueryParameters": [
+          /*		{
+          			"ParameterName": "{record_ids}",
+          			"Value": "[259a5f8e-c698-ee11-be37-000d3a2dfec8,e336ee08-15c3-ed11-83ff-000d3a43f6eb]"
+          		}*/
+          	]
+          });
+
+      Send-Upload-Status-to-Ping:
+        name: Send Upload Status to Ping
+        adaptor: '@openfn/language-http@6.5.4'
+        credential: null
+        body: |
+          fn(state => {
+
+
+            state.data = state.interventions.map(item => {
+
+              return {
+                "ShippingProcessId": "SHP-2748",
+                "InteropId": "INT-1436",
+                "Data": [
+                  {
+                    "ExternalId": "id55",
+                    "Fields": [
+                      {
+                        "Name": "progres_lpinterventionid",
+                        "Value": item.progres_lpinterventionid ?? ''
+                      },
+                      {
+                        "Name": "progres_businessunit",
+                        "Value": item.progres_businessunit
+                      },
+                      {
+                        "Name": "progres_primerotransferstatus",  // the field we are updating
+                        "Value": "125080002" // Pending
+                      },
+                      {
+                        "Name": "progres_primerotransferstatusdate",
+                        "Value": new Date().toISOString().slice(0, 10)
+                        // Pending
+                      }
+                    ]
+                  }
+                ]
+              }
+            })
+
+            // console.log({ data: state.data })
+
+            // console.log(
+            // 	`Sending success message to Ping for case_id ${data.case_id} and progres_interventionnumber ${data.progres_interventionnumber}`
+            // );
+
+            return state;
+          });
+
+          each('$.data[*]', post('/api/ingestion/v2/PNR-1363/data', {
+            body: state => state.data,
+            headers: {
+              'Ocp-Apim-Subscription-Key': '235af23dc65b45888f3eca393f545eb1',
+            },
+
+          })
+            .then(() => {
+              console.log('Message sent to Ping/Progres.');
+              return state;
+            })
+            .catch(error => {
+              let newError = error;
+              newError.config = 'REDACTED';
+              throw newError;
+            }))
+
+      Send-Referrals-to-Primero:
+        name: Send Referrals to Primero
+        adaptor: '@openfn/language-primero@4.0.7'
+        credential: null
+        body: |
+          each(
+            '$.interventions[*]',//
+            fn(state => {
+              const { data } = state;
+              const calculateAge = dob => {
+                const diff = Date.now() - dob.getTime();
+                const age_dt = new Date(diff);
+
+                return Math.abs(age_dt.getUTCFullYear() - 1970); //.toString();
+              };
+
+              const formatDate = (date, format) => {
+                if (!date) return null;
+                date = date.split(/\s|T/g)[0]; // split date by 'T' or by space
+
+                const parts = date.match(/(\d+)/g); // match all digits
+                if (!parts) return null;
+
+                let year, day;
+                if (parts[0].length === 4) {
+                  year = parts[0];
+                  day = parts[2];
+                } else {
+                  year = parts[2];
+                  day = parts[0];
+                }
+
+                const yearFinal = String(year).length > 2 ? year : `20${year}`;
+                const month = String(parts[1]).length === 2 ? parts[1] : `0${parts[1]}`;
+                const dayFinal = String(day).length === 2 ? day : `0${day}`;
+
+                if (format.substring(0, 4) === 'YYYY') {
+                  const separator = format.substring(4, 5);
+                  return `${yearFinal}${separator}${month}${separator}${dayFinal}`;
+                }
+                if (format.substring(0, 2) === 'DD') {
+                  const separator = format.substring(2, 3);
+                  return `${dayFinal}${separator}${month}${separator}${yearFinal}`;
+                }
+              };
+
+              const progres_description = data['progres_interventiontype2.interventiontype.progres_description'];
+
+              const serviceMap = {
+                'Alternative Care': 'alternative_care',
+                BID: 'focuses_non_specialized_mhpss_care',
+                BIA: 'focuses_non_specialized_mhpss_care',
+                'Family Tracing and Reunification': 'family_tracing_and_reunification',
+                'Advocacy / Direct intervention': 'other_please_specify',
+              };
+              state.serviceMap = serviceMap;
+
+              const serviceMapArray = Object.keys(serviceMap);
+
+              if (!serviceMapArray.includes(progres_description)) {
+                const errMessage = `Service value shared (${progres_description}) with progres_interventionnumber '${data.progres_interventionnumber}'`;
+                throw new Error(
+                  `${errMessage} is not an accepted UNICEF service type.\n\tPlease see the mapping specifications.`
+                );
+              }
+
+              const sexMap = {
+                125080000: 'female',
+                125080001: 'male',
+                125080002: 'other_b25f252',
+                125080003: 'unknown_4b34795',
+              };
+
+              const languageMap = {
+                Anyuak: 'language1',
+                Acholi: 'language10',
+                Amharic: 'language5',
+                Bari: 'language4',
+                Bembe: 'language7',
+                'Dinka, Northeastern': 'language3',
+                'Dinka, Northwestern; Alor': 'language3',
+                'Dinka, South Central': 'language3',
+                'Dinka, Southeastern;': 'language3',
+                'Dinka, Southeastern': 'language3',
+                'Dinka, Southwestern; Rek': 'language3',
+                Nuer: 'language2',
+                Somali: 'language8',
+                'Cutchi-swahili': 'language1',
+                Swahili: 'language1',
+                'Swahili, Congo': 'language1',
+                Zande: 'language5',
+              };
+
+              let lang = [];
+              lang.push(
+                data['progres_language.languages.progres_languagecodeid']
+                  ? languageMap[data['progres_language.progres_languagecodeidname']] ||
+                  'language6'
+                  : undefined
+              );
+
+              const address_current = [
+                data['individuals.progres_coalocationlevel1']?.Name,
+                data['individuals.progres_coalocationlevel2']?.Name,
+                data['individuals.progres_coalocationlevel3']?.Name,
+                data['individuals.progres_coalocationlevel4']?.Name,
+                data['individuals.progres_coalocationlevel5']?.Name,
+                data['individuals.progres_coalocationlevel6']?.Name,
+              ]
+                .filter(Boolean)  // Removes undefined, null, empty strings
+                .join(' ')        // Joins with single space
+                || null;          // Returns null if completely empty (instead of "")
+
+              const progres_sex = data['progres_individual.individuals.progres_sex'];
+              const provided =
+                (progres_description &&
+                  data['progres_individual.individuals.progres_id'] &&
+                  data['progres_individual.individuals.progres_registrationgroupid'] &&
+                  data['progres_individual.individuals.progres_givenname'] &&
+                  data['progres_individual.individuals.progres_familyname']) !== undefined;
+
+              const missingFields = [];
+              // CHECK MISSING FIELDS ==================================
+              if (!progres_description)
+                missingFields.push('progres_interventiontype2.interventiontype.progres_description');
+              if (!data['progres_individual.individuals.progres_id'])
+                missingFields.push('progres_individual.individuals.progres_id');
+              if (!data['progres_individual.individuals.progres_registrationgroupid'])
+                missingFields.push('progres_individual.individuals.progres_registrationgroupid');
+              if (!data['progres_individual.individuals.progres_givenname'])
+                missingFields.push('progres_individual.individuals.progres_givenname');
+              if (!data['progres_individual.individuals.progres_familyname'])
+                missingFields.push('progres_individual.individuals.progres_familyname');
+              if (!data['progres_individual.individuals.progres_dateofbirth'])
+                missingFields.push('progres_individual.individuals.progres_dateofbirth');
+              if (!data['progres_individual.individuals.progres_sex'])
+                missingFields.push('progres_individual.individuals.progres_sex');
+
+              if (!provided) {
+                throw new Error(
+                  `Intervention referral is missing fields required for sending to Primero: ${missingFields.join(
+                    ','
+                  )}. Please include missing fields and re-send the request`
+                );
+              }
+              // =======================================================
+
+              const service_type = data['progres_interventiontype2.interventiontype.progres_description'];
+
+              const today = formatDate(new Date().toISOString(), 'YYYY-MM-DD');
+
+              const body = {
+                services_section: [
+                  {
+                    service_response_day_time: data.progres_interventionstartdate
+                      ? new Date(data.progres_interventionstartdate).toISOString()
+                      : null,
+                    service_request_external: true, //Confirm primero mapping
+                    service_request_title: data['systemuser.title'] || '',
+                    service_request_agency: 'UNHCR',
+                    service_request_phone: data['systemuser.su.mobilephone'],
+                    service_request_email: data['systemuser.su.internalemailaddress'],
+                    service_referral_notes: [
+                      data.progres_interventiondescription,
+                      data.progres_reasonforreferral,
+                    ]
+                      .filter(Boolean)
+                      .join(',')
+                      .replace(/<\/p>/g, ' ')
+                      .replace(/<p>/g, ' '),
+                    service_type:
+                      serviceMap[service_type] || 'focuses_non_specialized_mhpss_care',
+                    service_implementing_agency: 'UNICEF', //default request for Gambella instead of progres_businessunit
+                    service_response_type: 'service_provision',
+                    service_referral: 'external_referral',
+                    unhcr_referral_status: 'pending',
+                    progres_interventionnumber: data.progres_interventionnumber + "," + data.progres_lpinterventionid + "," + data.progres_businessunit,
+                  },
+                ],
+                unhcr_individual_no: data['progres_individual.individuals.progres_id'],
+                unhcr_id_no: data['progres_individual.progres_registrationgroupidname'],
+                name_first: data['progres_individual.individuals.progres_givenname'],
+                name_middle: data['progres_individual.individuals.progres_middlename'],
+                name_last: data['progres_individual.individuals.progres_familyname'],
+                name_nickname: data['progres_individual.individuals.progres_commonyusedname'],
+                date_of_birth: data['progres_individual.individuals.progres_dateofbirth'].split('T')[0],
+                age: data['progres_individual.individuals.progres_dateofbirth']
+                  ? calculateAge(new Date(data['progres_individual.individuals.progres_dateofbirth']))
+                  : undefined,
+                sex: data['progres_individual.individuals.progres_sex'] ? sexMap[progres_sex] : undefined,
+                telephone_current: data['progres_individual.individuals.progres_primaryphonenumber'],
+                address_current,
+                //protection_concerns: protection[0] ? protection : null,
+                language: lang[0] ? lang : null,
+                status: 'open',
+                case_id: data.progres_primeroid ? data.progres_primeroid : undefined,
+                // owned_by: 'primero', //Gambella intake user
+                module_id: 'primeromodule-cp',
+              };
+
+              return getCases(
+                {
+                  remote: true,
+                  unhcr_individual_no: data['progres_individual.individuals.progres_id'],
+                }, {},
+                next => {
+                  console.log("this is next")
+                  console.log(next)
+                  if (next.data.length === 0) {
+                    // Check if proGres has a primeroid - if so, try to find by case_id instead
+                    if (data.progres_primeroid) {
+                      console.log(`No case found by unhcr_individual_no, but proGres has primeroid ${data.progres_primeroid}. Attempting update by case_id.`);
+                      // Remove case_id from body to avoid conflict, let Primero generate new one
+                      const createBody = { ...body };
+                      delete createBody.case_id;
+                      return createCase(createBody, resp => {
+                        console.log(`New case created for case id:${resp.data.case_id}`);
+                        return resp;
+                      })(next);
+                    }
+
+                    return createCase(body, resp => {
+                      console.log(`New case created for case id:${resp.data.case_id}`);
+                      return resp;
+                    })(next);
+                    // return createCase(body, resp => {
+                    //   console.log(`New case created for case id:${resp.data.case_id}`);
+                    //   console.log('Full Primero response:', JSON.stringify(resp.data, null, 2));
+
+                    //   return resp;
+                    // })(next);
+                  }
+
+                  if (next.data.length === 1) {
+                    console.log(`Matching Primero case found; updating...`);
+                    return updateCase(next.data[0].id, { data: body }, resp => {
+                      console.log(
+                        `Updated ${resp.data.id} @ ${resp.data.last_updated_at}`
+                      );
+                      return resp;
+                    })(next);
+                  }
+
+                  body.case_id = next.data[0].case_id;
+                  console.log(
+                    `Multiple cases found! Upserting first matching case with case id ${body.case_id}`
+                  );
+                  return updateCase(next.data[0].id, { data: body }, resp => {
+                    console.log(`Updated ${resp.data.id} @ ${resp.data.last_updated_at}`);
+                    return resp;
+                  })(next);
+                }
+              )(state);
+            })
+          );
+
+      Retrieve-full-intervention-details:
+        name: Retrieve full intervention details
+        adaptor: '@openfn/language-http@7.2.6'
+        credential: null
+        body: |
+          fn(state => {
+            const { Data } = state.data;
+            state.referrals = Data;
+            state.interventions = [];
+            return state
+          })
+          each('$.referrals[*]', post('/primes/fetch/paging/v3/retrievedatawithpaging', {
+            "ShippingProcessId": "SHP-2358", // Retrieve referral records from proGres deliveries table, interventions, individuals
+            "PartnerId": "PNR-1363",
+            "InteropID": "INT-1436",
+            "APIVersion": "V3",
+            "QueryParameters": [
+              {
+                "ParameterName": "{record_ids}",
+                "Value": state => state.data.progres_lpinterventionid //interventionNumber
+              }
+            ]
+          }, {
+            headers: { "Ocp-Apim-Subscription-Key": "235af23dc65b45888f3eca393f545eb1" },
+          }).then(state => {
+
+            const data = state.data.Data.map(item => ({ ...item, progres_lpinterventionid: state.referrals[state.index].progres_lpinterventionid }));
+
+            state.interventions.push(...data)
+            return state
+          }));
+
+    triggers:
+      cron:
+        type: cron
+        cron_expression: '00 00 * * *'
+        enabled: false
+    edges:
+      cron->Retrieve-pending-referrals:
+        source_trigger: cron
+        target_job: Retrieve-pending-referrals
+        condition_type: always
+        enabled: true
+      Retrieve-pending-referrals->Retrieve-full-intervention-details:
+        source_job: Retrieve-pending-referrals
+        target_job: Retrieve-full-intervention-details
+        condition_type: js_expression
+        condition_label: Has pending referrals
+        condition_expression: |
+          state.data?.RecordCount != null
+        enabled: true
+      Retrieve-full-intervention-details->Send-Referrals-to-Primero:
+        source_job: Retrieve-full-intervention-details
+        target_job: Send-Referrals-to-Primero
+        condition_type: on_job_success
+        enabled: true
+      Send-Referrals-to-Primero->Send-Upload-Status-to-Ping:
+        source_job: Send-Referrals-to-Primero
+        target_job: Send-Upload-Status-to-Ping
+        condition_type: on_job_success
+        enabled: true
+  Flow1-1.-Send-Referrals-to-Primero:
+    name: Flow1-1. Send Referrals to Primero
+    jobs:
+      Retrieve-pending-referrals:
+        name: Retrieve pending referrals
+        adaptor: '@openfn/language-http@7.2.6'
+        credential: rediet@openfn.org-Ping-Credential-Rediet
+        body: |
+          
+          post('/primes/fetch/paging/v3/retrievedatawithpaging', {
+          	"ShippingProcessId": "SHP-2747", // Retrieve referral records from proGres deliveries table, interventions, individuals
+          	"PartnerId": "PNR-1363",
+          	"InteropID": "INT-1436",
+              "APIVersion": "V3",
+          	"QueryParameters": [
+          /*		{
+          			"ParameterName": "{record_ids}",
+          			"Value": "[259a5f8e-c698-ee11-be37-000d3a2dfec8,e336ee08-15c3-ed11-83ff-000d3a43f6eb]"
+          		}*/
+          	]
+          }, {
+          headers: { "Ocp-Apim-Subscription-Key": "235af23dc65b45888f3eca393f545eb1" },
+          });
+
+      Send-Upload-Status-to-Ping:
+        name: Send Upload Status to Ping
+        adaptor: '@openfn/language-http@6.5.4'
+        credential: rediet@openfn.org-Ping-Credential-Rediet
+        body: |
+          // fn(state => {
+
+
+          //   state.data = state.interventions.map(item => {
+
+          //     return {
+          //       "ShippingProcessId": "SHP-2748",
+          //       "InteropId": "INT-1436",
+          //       "Data": [
+          //         {
+          //           "ExternalId": "id55",
+          //           "Fields": [
+          //             {
+          //               "Name": "progres_lpinterventionid",
+          //               "Value": item.progres_lpinterventionid ?? ''
+          //             },
+          //             {
+          //               "Name": "progres_businessunit",
+          //               "Value": item.progres_businessunit
+          //             },
+          //             {
+          //               "Name": "progres_primerotransferstatus",  // the field we are updating
+          //               "Value": "125080002" // Pending
+          //             },
+          //             {
+          //               "Name": "progres_primerotransferstatusdate",
+          //               "Value": new Date().toISOString().slice(0, 10)
+          //               // Pending
+          //             }
+          //           ]
+          //         }
+          //       ]
+          //     }
+          //   })
+
+          //   // console.log({ data: state.data })
+
+          //   // console.log(
+          //   // 	`Sending success message to Ping for case_id ${data.case_id} and progres_interventionnumber ${data.progres_interventionnumber}`
+          //   // );
+
+          //   return state;
+          // });
+
+          // each('$.data[*]', post('/api/ingestion/v2/PNR-1363/data', {
+          //   body: state => state.data,
+          //   headers: {
+          //     'Ocp-Apim-Subscription-Key': '235af23dc65b45888f3eca393f545eb1',
+          //   },
+
+          // })
+          //   .then(() => {
+          //     console.log('Message sent to Ping/Progres.');
+          //     return state;
+          //   })
+          //   .catch(error => {
+          //     let newError = error;
+          //     newError.config = 'REDACTED';
+          //     throw newError;
+          //   }))
+
+
+          // fn(state => {
+          //   const successRecords = state.successRecords || [];
+          //   const failedRecords = state.failedRecords || [];
+
+          //   console.log(`Processing ${successRecords.length} successful and ${failedRecords.length} failed records`);
+
+          //   // Build status updates for successful records (code 125080002 - Pending Acknowledgement)
+          //   const successPayloads = successRecords.map(item => ({
+          //     "ShippingProcessId": "SHP-2748",
+          //     "InteropId": "INT-1436",
+          //     "Data": [
+          //       {
+          //         "ExternalId": "id55",
+          //         "Fields": [
+          //           {
+          //             "Name": "progres_lpinterventionid",
+          //             "Value": item.progres_lpinterventionid ?? ''
+          //           },
+          //           {
+          //             "Name": "progres_businessunit",
+          //             "Value": item.progres_businessunit
+          //           },
+          //           {
+          //             "Name": "progres_primerotransferstatus",
+          //             "Value": "125080002" // Pending Acknowledgement
+          //           },
+          //           {
+          //             "Name": "progres_primerotransferstatusdate",
+          //             "Value": new Date().toISOString().slice(0, 10)
+          //           },
+          //           {
+          //             "Name": "progres_primeroid",
+          //             "Value": item.case_id || ''
+          //           },
+          //           {
+          //             "Name": "progres_comments_displayfield",
+          //             "Value": `Referral successfully sent to Primero. Case ID: ${item.case_id || 'N/A'}`
+          //           }
+          //         ]
+          //       }
+          //     ]
+          //   }));
+
+          //   // Build status updates for failed records (code 125080001 - Delivery Fail)
+          //   const failedPayloads = failedRecords.map(item => ({
+          //     "ShippingProcessId": "SHP-2748",
+          //     "InteropId": "INT-1436",
+          //     "Data": [
+          //       {
+          //         "ExternalId": "id55",
+          //         "Fields": [
+          //           {
+          //             "Name": "progres_lpinterventionid",
+          //             "Value": item.progres_lpinterventionid ?? ''
+          //           },
+          //           {
+          //             "Name": "progres_businessunit",
+          //             "Value": item.progres_businessunit
+          //           },
+          //           {
+          //             "Name": "progres_primerotransferstatus",
+          //             "Value": "125080001" // Delivery Fail
+          //           },
+          //           {
+          //             "Name": "progres_primerotransferstatusdate",
+          //             "Value": new Date().toISOString().slice(0, 10)
+          //           },
+          //           {
+          //             "Name": "progres_comments_displayfield",
+          //             "Value": item.reason || 'Unknown error'
+          //           }
+          //         ]
+          //       }
+          //     ]
+          //   }));
+
+          //   state.statusPayloads = [...successPayloads, ...failedPayloads];
+          //   console.log(`Total status updates to send: ${state.statusPayloads.length}`);
+          //   return state;
+          // });
+
+          // each('$.statusPayloads[*]',
+          //   post('/api/ingestion/v2/PNR-1363/data', state => ({
+          //     body: state.data,
+          //     headers: {
+          //       'Ocp-Apim-Subscription-Key': '235af23dc65b45888f3eca393f545eb1',
+          //     },
+          //   }))
+          //   .then(state => {
+          //     console.log('Status update sent to PING successfully.');
+          //     return state;
+          //   })
+          //   .catch(error => {
+          //     console.log(`Failed to send status to PING: ${error.message}`);
+          //     let newError = error;
+          //     newError.config = 'REDACTED';
+          //     throw newError;
+          //   })
+          // );
+
+          fn(state => {
+            const successRecords = state.successRecords || [];
+            const failedRecords = state.failedRecords || [];
+
+            console.log(`Processing ${successRecords.length} successful and ${failedRecords.length} failed records`);
+
+            // Build Data array with all records
+            const dataArray = [];
+
+            // Add successful records (code 125080002 - Pending Acknowledgement)
+            successRecords.forEach(item => {
+              dataArray.push({
+                "ExternalId": "id55",
+                "Fields": [
+                  {
+                    "Name": "progres_lpinterventionid",
+                    "Value": item.progres_lpinterventionid ?? ''
+                  },
+                  {
+                    "Name": "progres_businessunit",
+                    "Value": item.progres_businessunit
+                  },
+                  {
+                    "Name": "progres_primerotransferstatus",
+                    "Value": "125080002" // Pending Acknowledgement
+                  },
+                  {
+                    "Name": "progres_primerotransferstatusdate",
+                    "Value": new Date().toISOString().slice(0, 10)
+                  },
+                  {
+                    "Name": "progres_primeroid",
+                    "Value": item.case_id || ''
+                  },
+                  {
+                    "Name": "progres_comments_displayfield",
+                    "Value": `Referral successfully sent to Primero. Case ID: ${item.case_id || 'N/A'}`
+                  }
+                ]
+              });
+            });
+
+            // Add failed records (code 125080001 - Delivery Fail)
+            failedRecords.forEach(item => {
+              dataArray.push({
+                "ExternalId": "id55",
+                "Fields": [
+                  {
+                    "Name": "progres_lpinterventionid",
+                    "Value": item.progres_lpinterventionid ?? ''
+                  },
+                  {
+                    "Name": "progres_businessunit",
+                    "Value": item.progres_businessunit
+                  },
+                  {
+                    "Name": "progres_primerotransferstatus",
+                    "Value": "125080001" // Delivery Fail
+                  },
+                  {
+                    "Name": "progres_primerotransferstatusdate",
+                    "Value": new Date().toISOString().slice(0, 10)
+                  },
+                  {
+                    "Name": "progres_comments_displayfield",
+                    "Value": item.reason || 'Unknown error'
+                  }
+                ]
+              });
+            });
+
+            // Construct single payload
+            state.statusPayload = {
+              "ShippingProcessId": "SHP-2748",
+              "InteropId": "INT-1436",
+              "Data": dataArray
+            };
+
+            console.log(`Total records in payload: ${dataArray.length}`);
+            return state;
+          });
+
+          post('/api/ingestion/v2/PNR-1363/data', state => ({
+            body: state.statusPayload,
+            headers: {
+              'Ocp-Apim-Subscription-Key': '235af23dc65b45888f3eca393f545eb1',
+            },
+          }))
+          .then(state => {
+            console.log('All status updates sent to PING successfully.');
+            return state;
+          })
+          .catch(error => {
+            console.log(`Failed to send status to PING: ${error.message}`);
+            let newError = error;
+            newError.config = 'REDACTED';
+            throw newError;
+          });
+
+      Send-Referrals-to-Primero:
+        name: Send Referrals to Primero
+        adaptor: '@openfn/language-primero@4.0.7'
+        credential: rediet@openfn.org-Primero-Gambella
+        body: |
+          fn(state => {
+            state.successRecords = state.successRecords || [];
+            state.failedRecords = state.failedRecords || [];
+            return state;
+          })
+
+          each(
+            '$.interventions[*]',//
+            fn(state => {
+              const { data } = state;
+              const calculateAge = dob => {
+                const diff = Date.now() - dob.getTime();
+                const age_dt = new Date(diff);
+
+                return Math.abs(age_dt.getUTCFullYear() - 1970); //.toString();
+              };
+
+              const formatDate = (date, format) => {
+                if (!date) return null;
+                date = date.split(/\s|T/g)[0]; // split date by 'T' or by space
+
+                const parts = date.match(/(\d+)/g); // match all digits
+                if (!parts) return null;
+
+                let year, day;
+                if (parts[0].length === 4) {
+                  year = parts[0];
+                  day = parts[2];
+                } else {
+                  year = parts[2];
+                  day = parts[0];
+                }
+
+                const yearFinal = String(year).length > 2 ? year : `20${year}`;
+                const month = String(parts[1]).length === 2 ? parts[1] : `0${parts[1]}`;
+                const dayFinal = String(day).length === 2 ? day : `0${day}`;
+
+                if (format.substring(0, 4) === 'YYYY') {
+                  const separator = format.substring(4, 5);
+                  return `${yearFinal}${separator}${month}${separator}${dayFinal}`;
+                }
+                if (format.substring(0, 2) === 'DD') {
+                  const separator = format.substring(2, 3);
+                  return `${dayFinal}${separator}${month}${separator}${yearFinal}`;
+                }
+              };
+
+              const progres_description = data['progres_interventiontype2.interventiontype.progres_description'];
+
+              const serviceMap = {
+                'Alternative Care': 'alternative_care',
+                BID: 'focused_non_specialized_mhpss_care',
+                BIA: 'focused_non_specialized_mhpss_care',
+                'Family Tracing and Reunification': 'family_tracing_and_reunification'
+              };
+              state.serviceMap = serviceMap;
+
+              const serviceMapArray = Object.keys(serviceMap);
+
+              // if (!serviceMapArray.includes(progres_description)) {
+              //   const errMessage = `Service value shared (${progres_description}) with progres_interventionnumber '${data.progres_interventionnumber}'`;
+              //   throw new Error(
+              //     `${errMessage} is not an accepted UNICEF service type.\n\tPlease see the mapping specifications.`
+              //   );
+              // }
+              if (!serviceMapArray.includes(progres_description)) {
+                const reason = `Service value '${progres_description}' for intervention '${data.progres_interventionnumber}' is not an accepted UNICEF service type. Please see mapping specifications.`;
+                console.log(`Validation failed: ${reason}`);
+                state.failedRecords.push({
+                  progres_lpinterventionid: data.progres_lpinterventionid,
+                  progres_businessunit: data.progres_businessunit,
+                  reason: reason
+                });
+                return state;
+              }
+
+              const sexMap = {
+                125080000: 'female',
+                125080001: 'male',
+                125080002: 'other_b25f252',
+                125080003: 'unknown_4b34795',
+              };
+
+              const languageMap = {
+                Anyuak: 'language1',
+                Acholi: 'language10',
+                Amharic: 'language5',
+                Bari: 'language4',
+                Bembe: 'language7',
+                'Dinka, Northeastern': 'language3',
+                'Dinka, Northwestern; Alor': 'language3',
+                'Dinka, South Central': 'language3',
+                'Dinka, Southeastern;': 'language3',
+                'Dinka, Southeastern': 'language3',
+                'Dinka, Southwestern; Rek': 'language3',
+                Nuer: 'language2',
+                Somali: 'language8',
+                'Cutchi-swahili': 'language1',
+                Swahili: 'language1',
+                'Swahili, Congo': 'language1',
+                Zande: 'language5',
+              };
+
+              let lang = [];
+              lang.push(
+                data['progres_language.languages.progres_languagecodeid']
+                  ? languageMap[data['progres_language.progres_languagecodeidname']] ||
+                  'language6'
+                  : undefined
+              );
+
+              const address_current = [
+                data['individuals.progres_coalocationlevel1']?.Name,
+                data['individuals.progres_coalocationlevel2']?.Name,
+                data['individuals.progres_coalocationlevel3']?.Name,
+                data['individuals.progres_coalocationlevel4']?.Name,
+                data['individuals.progres_coalocationlevel5']?.Name,
+                data['individuals.progres_coalocationlevel6']?.Name,
+              ]
+                .filter(Boolean)  // Removes undefined, null, empty strings
+                .join(' ')        // Joins with single space
+                || null;          // Returns null if completely empty (instead of "")
+
+              const progres_sex = data['progres_individual.individuals.progres_sex'];
+              // const provided =
+              //   (progres_description &&
+              //     data['progres_individual.individuals.progres_id'] &&
+              //     data['progres_individual.individuals.progres_registrationgroupid'] &&
+              //     data['progres_individual.individuals.progres_givenname'] &&
+              //     data['progres_individual.individuals.progres_familyname']) !== undefined;
+
+              const missingFields = [];
+              // CHECK MISSING FIELDS ==================================
+              if (!progres_description)
+                missingFields.push('progres_interventiontype2.interventiontype.progres_description');
+              if (!data['progres_individual.individuals.progres_id'])
+                missingFields.push('progres_individual.individuals.progres_id');
+              if (!data['progres_individual.individuals.progres_registrationgroupid'])
+                missingFields.push('progres_individual.individuals.progres_registrationgroupid');
+              if (!data['progres_individual.individuals.progres_givenname'])
+                missingFields.push('progres_individual.individuals.progres_givenname');
+              if (!data['progres_individual.individuals.progres_familyname'])
+                missingFields.push('progres_individual.individuals.progres_familyname');
+              if (!data['progres_individual.individuals.progres_dateofbirth'])
+                missingFields.push('progres_individual.individuals.progres_dateofbirth');
+              if (!data['progres_individual.individuals.progres_sex'])
+                missingFields.push('progres_individual.individuals.progres_sex');
+
+              // if (!provided) {
+              //   throw new Error(
+              //     `Intervention referral is missing fields required for sending to Primero: ${missingFields.join(
+              //       ','
+              //     )}. Please include missing fields and re-send the request`
+              //   );
+              // }
+
+              if (missingFields.length > 0) {
+                const reason = `Missing required fields: ${missingFields.join(', ')}. Please include missing fields and re-send.`;
+                console.log(`Validation failed for ${data.progres_interventionnumber}: ${reason}`);
+                state.failedRecords.push({
+                  progres_lpinterventionid: data.progres_lpinterventionid,
+                  progres_businessunit: data.progres_businessunit,
+                  reason: reason
+                });
+                return state;
+              }
+              // =======================================================
+
+              const service_type = data['progres_interventiontype2.interventiontype.progres_description'];
+
+              const today = formatDate(new Date().toISOString(), 'YYYY-MM-DD');
+
+              const body = {
+                services_section: [
+                  {
+                    service_response_day_time: data.progres_interventionstartdate
+                      ? new Date(data.progres_interventionstartdate).toISOString()
+                      : null,
+                    service_request_external: true, //Confirm primero mapping
+                    service_request_title: data['systemuser.title'] || '',
+                    service_request_agency: 'UNHCR',
+                    service_request_phone: data['systemuser.su.mobilephone'],
+                    service_request_email: data['systemuser.su.internalemailaddress'],
+                    service_referral_notes: [
+                      data.progres_interventiondescription,
+                      data.progres_reasonforreferral,
+                    ]
+                      .filter(Boolean)
+                      .join(',')
+                      .replace(/<\/p>/g, ' ')
+                      .replace(/<p>/g, ' '),
+                    service_type:
+                      serviceMap[service_type] || 'focuses_non_specialized_mhpss_care',
+                    service_implementing_agency: 'UNICEF', //default request for Gambella instead of progres_businessunit
+                    service_response_type: 'service_provision',
+                    service_referral: 'external_referral',
+                    unhcr_referral_status: 'pending',
+                    progres_interventionnumber: data.progres_interventionnumber + "," + data.progres_lpinterventionid + "," + data.progres_businessunit,
+                  },
+                ],
+                unhcr_individual_no: data['progres_individual.individuals.progres_id'],
+                unhcr_id_no: data['progres_individual.progres_registrationgroupidname'],
+                name_first: data['progres_individual.individuals.progres_givenname'],
+                name_middle: data['progres_individual.individuals.progres_middlename'],
+                name_last: data['progres_individual.individuals.progres_familyname'],
+                name_nickname: data['progres_individual.individuals.progres_commonyusedname'],
+                date_of_birth: data['progres_individual.individuals.progres_dateofbirth'].split('T')[0],
+                age: data['progres_individual.individuals.progres_dateofbirth']
+                  ? calculateAge(new Date(data['progres_individual.individuals.progres_dateofbirth']))
+                  : undefined,
+                sex: data['progres_individual.individuals.progres_sex'] ? sexMap[progres_sex] : undefined,
+                telephone_current: data['progres_individual.individuals.progres_primaryphonenumber'],
+                address_current,
+                //protection_concerns: protection[0] ? protection : null,
+                language: lang[0] ? lang : null,
+                status: 'open',
+                case_id: data.progres_primeroid ? data.progres_primeroid : undefined,
+                // owned_by: 'primero', //Gambella intake user
+                module_id: 'primeromodule-cp',
+              };
+
+              // return getCases(
+              //   {
+              //     remote: true,
+              //     unhcr_individual_no: data['progres_individual.individuals.progres_id'],
+              //   }, {},
+              //   next => {
+              //     console.log("this is next")
+              //     console.log(next)
+              //     if (next.data.length === 0) {
+              //       // Check if proGres has a primeroid - if so, try to find by case_id instead
+              //       if (data.progres_primeroid) {
+              //         console.log(`No case found by unhcr_individual_no, but proGres has primeroid ${data.progres_primeroid}. Attempting update by case_id.`);
+              //         // Remove case_id from body to avoid conflict, let Primero generate new one
+              //         const createBody = { ...body };
+              //         delete createBody.case_id;
+              //         return createCase(createBody, resp => {
+              //           console.log(`New case created for case id:${resp.data.case_id}`);
+              //           return resp;
+              //         })(next);
+              //       }
+
+              //       return createCase(body, resp => {
+              //         console.log(`New case created for case id:${resp.data.case_id}`);
+              //         return resp;
+              //       })(next);
+              //       // return createCase(body, resp => {
+              //       //   console.log(`New case created for case id:${resp.data.case_id}`);
+              //       //   console.log('Full Primero response:', JSON.stringify(resp.data, null, 2));
+
+              //       //   return resp;
+              //       // })(next);
+              //     }
+
+              //     if (next.data.length === 1) {
+              //       console.log(`Matching Primero case found; updating...`);
+              //       return updateCase(next.data[0].id, { data: body }, resp => {
+              //         console.log(
+              //           `Updated ${resp.data.id} @ ${resp.data.last_updated_at}`
+              //         );
+              //         return resp;
+              //       })(next);
+              //     }
+
+              //     body.case_id = next.data[0].case_id;
+              //     console.log(
+              //       `Multiple cases found! Upserting first matching case with case id ${body.case_id}`
+              //     );
+              //     return updateCase(next.data[0].id, { data: body }, resp => {
+              //       console.log(`Updated ${resp.data.id} @ ${resp.data.last_updated_at}`);
+              //       return resp;
+              //     })(next);
+              //   }
+              // )(state);
+              // Store record identifiers for tracking
+              const recordId = data.progres_lpinterventionid;
+              const businessUnit = data.progres_businessunit;
+              const interventionNumber = data.progres_interventionnumber;
+
+              return getCases(
+                {
+                  remote: true,
+                  unhcr_individual_no: data['progres_individual.individuals.progres_id'],
+                },
+                {},
+                next => {
+                  // Helper to track successful Primero operations
+                  const handleSuccess = (resp, action, caseId) => {
+                    const finalCaseId = caseId || resp.data?.case_id || resp.data?.id;
+                    console.log(`${action} case ${finalCaseId}`);
+                    state.successRecords.push({
+                      progres_lpinterventionid: recordId,
+                      progres_businessunit: businessUnit,
+                      case_id: finalCaseId
+                    });
+                    return resp;
+                  };
+
+                  // Helper to track failed Primero operations
+                  const handleError = (error, action) => {
+                    const reason = `Primero ${action} failed: ${error.message || 'Unknown API error'}`;
+                    console.log(`Error for ${interventionNumber}: ${reason}`);
+                    state.failedRecords.push({
+                      progres_lpinterventionid: recordId,
+                      progres_businessunit: businessUnit,
+                      reason: reason
+                    });
+                    return next;
+                  };
+
+                  if (next.data.length === 0) {
+                    const createBody = { ...body };
+                    if (data.progres_primeroid) {
+                      console.log(`No case found by unhcr_individual_no, proGres has primeroid ${data.progres_primeroid}. Creating new case.`);
+                      delete createBody.case_id;
+                    }
+                    return createCase(createBody, resp => handleSuccess(resp, 'Created', resp.data?.case_id))(next)
+                      .catch(err => handleError(err, 'create'));
+                  }
+
+                  if (next.data.length >= 1) {
+                    const targetCase = next.data[0];
+                    console.log(`Matching Primero case found (${targetCase.case_id}); updating...`);
+                    return updateCase(targetCase.id, { data: body }, resp => handleSuccess(resp, 'Updated', targetCase.case_id))(next)
+                      .catch(err => handleError(err, 'update'));
+                  }
+                }
+              )(state);
+            })
+          );
+
+      Retrieve-full-intervention-details:
+        name: Retrieve full intervention details
+        adaptor: '@openfn/language-http@7.2.6'
+        credential: rediet@openfn.org-Ping-Credential-Rediet
+        body: |
+          fn(state => {
+            const { Data } = state.data;
+            state.referrals = Data;
+            state.interventions = [];
+            // Initialize tracking arrays for PING status updates
+            state.successRecords = [];
+            state.failedRecords = [];
+
+            console.log(`Step 1 returned ${Data.length} referrals`);
+
+            return state;
+          })
+          each('$.referrals[*]', post('/primes/fetch/paging/v3/retrievedatawithpaging', {
+            "ShippingProcessId": "SHP-2358", // Retrieve referral records from proGres deliveries table, interventions, individuals
+            "PartnerId": "PNR-1363",
+            "InteropID": "INT-1436",
+            "APIVersion": "V3",
+            "QueryParameters": [
+              {
+                "ParameterName": "{record_ids}",
+                "Value": state => state.data.progres_lpinterventionid //interventionNumber
+              }
+            ]
+          }, {
+            headers: { "Ocp-Apim-Subscription-Key": "235af23dc65b45888f3eca393f545eb1" },
+          }).then(state => {
+
+            // const data = state.data.Data.map(item => ({ ...item, progres_lpinterventionid: state.referrals[state.index].progres_lpinterventionid }));
+
+            // state.interventions.push(...data)
+            // return state
+
+            const recordCount = state.data.Data?.length || 0;
+              const interventionId = state.referrals[state.index].progres_lpinterventionid;
+              
+              // Log if more than 1 record returned for a single intervention
+              if (recordCount !== 1) {
+                console.log(`WARNING: ${recordCount} records returned for intervention ${interventionId}`);
+              }
+              
+              const data = state.data.Data.map(item => ({
+                ...item,
+                progres_lpinterventionid: state.referrals[state.index].progres_lpinterventionid
+              }));
+
+              state.interventions.push(...data);
+              return state;
+          }));
+
+          fn(state => {
+            console.log(`Total interventions after detail fetch: ${state.interventions.length}`);
+            return state;
+          })
+
+    triggers:
+      cron:
+        type: cron
+        cron_expression: '00 00 * * *'
+        enabled: false
+    edges:
+      cron->Retrieve-pending-referrals:
+        source_trigger: cron
+        target_job: Retrieve-pending-referrals
+        condition_type: always
+        enabled: true
+      Retrieve-pending-referrals->Retrieve-full-intervention-details:
+        source_job: Retrieve-pending-referrals
+        target_job: Retrieve-full-intervention-details
+        condition_type: js_expression
+        condition_label: Has pending referrals
+        condition_expression: |
+          state.data?.RecordCount != null
+        enabled: true
+      Retrieve-full-intervention-details->Send-Referrals-to-Primero:
+        source_job: Retrieve-full-intervention-details
+        target_job: Send-Referrals-to-Primero
+        condition_type: on_job_success
+        enabled: true
+      Send-Referrals-to-Primero->Send-Upload-Status-to-Ping:
+        source_job: Send-Referrals-to-Primero
+        target_job: Send-Upload-Status-to-Ping
+        condition_type: on_job_success
+        enabled: true
+  Flow1-2.-Send-Decision-to-Ping:
+    name: Flow1-2. Send Decision to Ping
+    jobs:
+      Send-Decision-to-Ping:
+        name: Send Decision to Ping
+        adaptor: '@openfn/language-http@6.5.4'
+        credential: rediet@openfn.org-Ping-Credential-Rediet
+        body: |
+          fn(state => {
+            const statusMap = {
+              'acknowledged': '125080003',
+              'rejected': '125080004'
+            };
+
+            const decisions = state.decision
+              .filter(d => {
+                if (d.status === 'pending') {
+                  console.log(`Skipping decision for ${d.progres_interventionnumber}: status is pending`);
+                  return false;
+                }
+                
+                const parts = d.progres_interventionnumber?.split(',') || [];
+                if (parts.length < 3 || !parts[1] || !parts[2]) {
+                  console.log(`Discarding old referral for case ${d.case_id}: progres_interventionnumber missing lpInterventionId or businessUnit. Value: "${d.progres_interventionnumber}"`);
+                  return false;
+                }
+                
+                return true;
+              })
+              .map(d => {
+                const [, lpInterventionId, businessUnit] = d.progres_interventionnumber.split(',');
+                const currentDate = new Date().toISOString().split('T')[0];
+                
+                const reasonText = d.closure_reason && d.closure_reason !== 'No reason specified.' 
+                  ? `: ${d.closure_reason}` 
+                  : '';
+                const comment = `Referral ${d.status} by PRIMERO${reasonText}`;
+
+                return {
+                  ExternalId: d.case_id,
+                  Attachments: [],
+                  Fields: [
+                    { Name: 'progres_lpinterventionid', Value: lpInterventionId },
+                    { Name: 'progres_businessunit', Value: businessUnit },
+                    { Name: 'progres_primerotransferstatus', Value: statusMap[d.status] || '125080001' },
+                    { Name: 'progres_primerotransferstatusdate', Value: currentDate },
+                    { Name: 'progres_primeroid', Value: d.case_id },
+                    { Name: 'progres_primerocaseworker', Value: d.primero_user },
+                    { Name: 'progres_comments_displayfield', Value: comment }
+                  ]
+                };
+              });
+
+            state.pingPayload = {
+              ShippingProcessId: 'SHP-2748',
+              InteropId: 'INT-1436',
+              Data: decisions
+            };
+
+            state.hasDecisionsToSend = decisions.length > 0;
+
+            if (state.hasDecisionsToSend) {
+              console.log('Decisions to send:', JSON.stringify(state.pingPayload, null, 2));
+            } else {
+              console.log('No valid decisions to send to PING - skipping POST');
+            }
+
+            return state;
+          });
+
+          fn(state => {
+            if (!state.hasDecisionsToSend) return state;
+
+            return post('/api/ingestion/v2/PNR-1363/data', {
+              body: state.pingPayload,
+              headers: {
+                'Ocp-Apim-Subscription-Key': '235af23dc65b45888f3eca393f545eb1',
+              },
+            })(state);
+          });
+
+          fn(state => {
+            if (state.hasDecisionsToSend) {
+              console.log('Decision has been sent.');
+            }
+            return state;
+          });
+
+          fn(state => {
+            if (state.error) {
+              console.log(state.request);
+              let newError = state.error;
+              newError.config = 'REDACTED';
+              throw newError;
+            }
+            return state;
+          });
+
+          // fn(state => {
+          //   let lastRunDateTime = state.referralsToSend
+          //     .map(c => c.last_updated_at)
+          //     .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+
+          //   lastRunDateTime =
+          //     new Date(lastRunDateTime) > new Date()
+          //       ? lastRunDateTime
+          //       : new Date().toISOString();
+
+          //   console.log('New cursor value:', lastRunDateTime);
+          //   return { ...state, data: {}, references: [], lastRunDateTime };
+          // });
+      Get-Decisions-from-Primero:
+        name: Get Decisions from Primero
+        adaptor: '@openfn/language-primero@3.0.9'
+        credential: rediet@openfn.org-Primero-Gambella
+        body: |
+          const manualCursor = '2024-04-09T21:00:17.471Z';
+
+          getCases(
+              {
+                last_updated_at: `${state.lastRunDateTime || manualCursor}..`,
+                per: 2000, //to override paging default of 20 cases per page
+              }
+          )
+
+          fn(state => {
+            
+            console.log(
+              `Current cursor value: '${state.lastRunDateTime || manualCursor}'`
+            );
+            const { data, configuration } = state;
+            state.decision = []
+            console.log('Primero cases fetched for ids: ', data.map(c => c.case_id));
+                const today = new Date();
+                const yesterday = new Date(new Date().getTime());
+                yesterday.setDate(yesterday.getDate() - 1);
+
+                const referralsToSend = data.filter(
+                  (
+                    ref //check if the service was an external referral & the decision changed
+                  ) =>
+                    ref.services_section &&
+                    ref.services_section.some(
+                      service =>
+                        service.service_request_agency === 'UNHCR' &&
+                        service.service_referral === 'external_referral' &&
+                        (service.unhcr_referral_status === 'accepted' ||
+                          service.unhcr_referral_status === 'rejected')
+                    )
+                );
+
+                state.referralsToSend = referralsToSend;
+                if (referralsToSend.length === 0) {
+                  console.log(
+                    'No change in UNHCR Referral Status detected. No decisions to send to Ping.'
+                  );
+                  return state;
+                }
+                console.log('Number of matching referrals: ', referralsToSend.length);
+                return each(referralsToSend, state => {
+                  const { data } = state;
+                  const { services_section } = data;
+
+                  const allowedStatus = ['accepted', 'rejected'];
+                  return each(services_section, state => {
+                    if (
+                      state.data.service_referral === 'external_referral' &&
+                      allowedStatus.includes(state.data.unhcr_referral_status)
+                    ) {
+                      const decision = {
+                        case_id: data.case_id,
+                        primero_user: data.owned_by,
+                        progres_interventionnumber: state.data.progres_interventionnumber,
+                        status:
+                          state.data.unhcr_referral_status === 'accepted'
+                            ? 'acknowledged'
+                            : state.data.unhcr_referral_status === 'rejected'
+                            ? 'rejected'
+                            : 'Pending Acknowledgement',
+                        closure_reason:
+                          state.data.unhcr_referral_rejection_reason ||
+                          'No reason specified.',
+                        request_type: 'ReceiveDecisionOutgoingReferral', //default hardcode
+                      };
+                      const caseIdDisplay = data.case_id_display;
+                      console.log(
+                        `Decision to send to Ping for case_id ${decision.case_id} and progres_interventionnumber ${decision.progres_interventionnumber}`
+                      );
+                      console.log(`Primero case_id_display:  ${caseIdDisplay}`);
+                      console.log(`Decision status: ${decision.status}`);
+                      state.decision.push(decision)
+                      return state;
+                    }
+                    return state;
+                  })(state);
+                })(state);
+          });
+
+    triggers:
+      cron:
+        type: cron
+        cron_expression: '0 * * * *'
+        enabled: false
+    edges:
+      cron->Get-Decisions-from-Primero:
+        source_trigger: cron
+        target_job: Get-Decisions-from-Primero
+        condition_type: always
+        enabled: true
+      Get-Decisions-from-Primero->Send-Decision-to-Ping:
+        source_job: Get-Decisions-from-Primero
+        target_job: Send-Decision-to-Ping
+        condition_type: js_expression
+        condition_label: Has Decision
+        condition_expression: |
+          state.decision.length > 0
+
+        enabled: true
