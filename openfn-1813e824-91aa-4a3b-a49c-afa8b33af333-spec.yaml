@@ -827,7 +827,6 @@ workflows:
             const payload = {
               "case_id": case_id,
               "service_id": service_id,
-              service_type,
               interoperability_referral_id,
               "type": "Referral",
               "record_type": "case",
@@ -877,24 +876,10 @@ workflows:
             return state;
           });
 
-          // const findReferral = (referrals, service_type_guid) => {
-          //   const primeroServiceType = reverseServiceMap[service_type_guid];
-          //   const matches = referrals.filter(r =>
-          //     r.service_type === primeroServiceType &&
-          //     r.referred_to_agency === 'UNHCR'
-          //   );
-          //   if (matches.length === 1) return matches[0];
-          //   if (matches.length === 0) return null;
-          //   return 'ambiguous';
-          // };
-
           const findReferral = (referrals, service_id) => {
             const referral = referrals.find(
               referral => referral.service_record_id === service_id
             );
-            console.log("referrals", referrals)
-            console.log("service_id", service_id)
-            console.log("found", referral)
             return referral;
           };
 
@@ -904,39 +889,6 @@ workflows:
             return getReferrals({ externalId: 'case_id', id: case_id })(state)
               .then(state => {
                 const referrals = state.data;
-
-                console.log('Referrals returned:', JSON.stringify(referrals.map(r => ({
-                  id: r.id,
-                  record_id: r.record_id,   // ← add this
-                  service_type: r.service_type,
-                  referred_to_agency: r.referred_to_agency
-                }))));
-
-                // // TODO: revert to findReferral() once test data has service_type/referred_to_agency populated,
-                // // or once progres_orgreferralid is available from SHP-2796 for exact matching
-                // let referral;
-                // const hasMatchableFields = referrals.some(r => r.service_type || r.referred_to_agency);
-
-                // if (hasMatchableFields) {
-                //   referral = findReferral(referrals, service_type);
-                //   if (!referral) {
-                //     console.log(`No matching UNHCR referral found for case ${case_id} with service_type ${service_type}. Skipping.`);
-                //     return state;
-                //   }
-                //   if (referral === 'ambiguous') {
-                //     console.log(`Multiple UNHCR referrals found for case ${case_id} with same service_type. Cannot determine which to update. Skipping.`);
-                //     return state;
-                //   }
-                // } else {
-                //   // TEMPORARY: referral fields not populated in test data, take the only referral available
-                //   console.log(`WARNING: Referral fields not available for matching on case ${case_id}. Using first referral as fallback (test mode only).`);
-                //   if (referrals.length !== 1) {
-                //     console.log(`Cannot use fallback: ${referrals.length} referrals found for case ${case_id}. Skipping.`);
-                //     return state;
-                //   }
-                //   referral = referrals[0];
-                // }
-
                 const referral = findReferral(referrals, service_id);
 
                 if (!referral) {
@@ -945,7 +897,7 @@ workflows:
                 }
 
                 decision['id'] = referral.id;
-                //decision['record_id'] = referral.record_id;
+                decision['record_id'] = referral.record_id;
 
                 console.log(`Found referral ${referral.id} for case ${case_id}. Sending decision: ${decision.status}`);
 
