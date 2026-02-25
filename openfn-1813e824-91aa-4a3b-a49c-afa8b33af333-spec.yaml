@@ -18,6 +18,9 @@ credentials:
   rediet@openfn.org-Primero-Gambella:
     name: Primero Gambella
     owner: rediet@openfn.org
+  rediet@openfn.org-Primero-Gambella-API-User:
+    name: Primero Gambella API User
+    owner: rediet@openfn.org
 workflows:
   Copy-Flow1-1.-Send-Referrals-to-Primero:
     name: Copy Flow1-1. Send Referrals to Primero
@@ -43,8 +46,8 @@ workflows:
 
       Send-Upload-Status-to-Ping:
         name: Send Upload Status to Ping
-        adaptor: '@openfn/language-http@6.5.4'
-        credential: null
+        adaptor: '@openfn/language-ping@1.0.0'
+        credential: hunter@openfn.org-Official-Ping-credentials
         body: |
           fn(state => {
 
@@ -90,14 +93,8 @@ workflows:
             return state;
           });
 
-          each('$.data[*]', post('/api/ingestion/v2/PNR-1363/data', {
-            body: state => state.data,
-            headers: {
-              'Ocp-Apim-Subscription-Key': '235af23dc65b45888f3eca393f545eb1',
-            },
-
-          })
-            .then(() => {
+          each('$.data[*]', http.post('/api/ingestion/v2/PNR-1363/data', state => state.data)
+            .then((state) => {
               console.log('Message sent to Ping/Progres.');
               return state;
             })
@@ -109,8 +106,8 @@ workflows:
 
       Send-Referrals-to-Primero:
         name: Send Referrals to Primero
-        adaptor: '@openfn/language-primero@4.0.7'
-        credential: null
+        adaptor: '@openfn/language-primero@4.0.8'
+        credential: rediet@openfn.org-Primero-Gambella
         body: |
           each(
             '$.interventions[*]',//
@@ -200,14 +197,21 @@ workflows:
                 Zande: 'language5',
               };
 
+              // let lang = [];
+              // lang.push(
+              //   data['progres_language.languages.progres_languagecodeid']
+              //     ? languageMap[data['progres_language.progres_languagecodeidname']] ||
+              //     'language6'
+              //     : undefined
+              // );
               let lang = [];
-              lang.push(
-                data['progres_language.languages.progres_languagecodeid']
-                  ? languageMap[data['progres_language.progres_languagecodeidname']] ||
-                  'language6'
-                  : undefined
-              );
-
+              if (data._languages && data._languages.length > 0) {
+                lang = data._languages
+                  .map(langName => languageMap[langName] || 'language6')
+                  .filter((v, i, a) => a.indexOf(v) === i);
+              } else if (data['progres_language.progres_languagecodeidname']) {
+                lang.push(languageMap[data['progres_language.progres_languagecodeidname']] || 'language6');
+              }
               const address_current = [
                 data['individuals.progres_coalocationlevel1']?.Name,
                 data['individuals.progres_coalocationlevel2']?.Name,
@@ -314,7 +318,7 @@ workflows:
                 }, {},
                 next => {
                   console.log("this is next")
-                  console.log(next)
+                  // console.log(next)
                   if (next.data.length === 0) {
                     // Check if proGres has a primeroid - if so, try to find by case_id instead
                     if (data.progres_primeroid) {
@@ -365,35 +369,109 @@ workflows:
 
       Retrieve-full-intervention-details:
         name: Retrieve full intervention details
-        adaptor: '@openfn/language-http@7.2.6'
-        credential: null
+        adaptor: '@openfn/language-ping@latest'
+        credential: hunter@openfn.org-Official-Ping-credentials
         body: |
+          // fn(state => {
+          //   const { Data } = state.data;
+          //   state.referrals = Data;
+          //   state.interventions = [];
+          //   return state
+          // })
+          // each('$.referrals[*]', http.post('/primes/fetch/paging/v3/retrievedatawithpaging', {
+          //   "ShippingProcessId": "SHP-2358", // Retrieve referral records from proGres deliveries table, interventions, individuals
+          //   "PartnerId": "PNR-1363",
+          //   "InteropID": "INT-1436",
+          //   "APIVersion": "V3",
+          //   "QueryParameters": [
+          //     {
+          //       "ParameterName": "{record_ids}",
+          //       "Value": state => state.data.progres_lpinterventionid //interventionNumber
+          //     }
+          //   ]
+          // }).then(state => {
+
+          //   const data = state.data.Data.map(item => ({ ...item, progres_lpinterventionid: state.referrals[state.index].progres_lpinterventionid }));
+
+          //   state.interventions.push(...data)
+          //   return state
+          // }));
           fn(state => {
             const { Data } = state.data;
             state.referrals = Data;
             state.interventions = [];
-            return state
-          })
-          each('$.referrals[*]', post('/primes/fetch/paging/v3/retrievedatawithpaging', {
-            "ShippingProcessId": "SHP-2358", // Retrieve referral records from proGres deliveries table, interventions, individuals
-            "PartnerId": "PNR-1363",
-            "InteropID": "INT-1436",
-            "APIVersion": "V3",
-            "QueryParameters": [
-              {
-                "ParameterName": "{record_ids}",
-                "Value": state => state.data.progres_lpinterventionid //interventionNumber
+            return state;
+          });
+
+          each('$.referrals[*]',
+            http.post('/primes/fetch/paging/v3/retrievedatawithpaging', {
+              "ShippingProcessId": "SHP-2358",
+              "PartnerId": "PNR-1363",
+              "InteropID": "INT-1436",
+              "APIVersion": "V3",
+              "QueryParameters": [
+                {
+                  "ParameterName": "{record_ids}",
+                  "Value": state => state.data.progres_lpinterventionid
+                }
+              ]
+            }).then(state => {
+              const rawData = state.data.Data;
+              const lpInterventionId = state.referrals[state.index].progres_lpinterventionid;
+
+              // Group by intervention number and aggregate
+              const grouped = {};
+
+              for (const record of rawData) {
+                const key = record.progres_interventionnumber;
+
+                if (!grouped[key]) {
+                  // First record - use as base
+                  grouped[key] = {
+                    ...record,
+                    progres_lpinterventionid: lpInterventionId,
+                    // Initialize aggregation arrays
+                    _languages: new Set(),
+                    _specificNeeds: []
+                  };
+                }
+
+                // Aggregate languages (dedupe via Set)
+                const langName = record['progres_language.progres_languagecodeidname'];
+                if (langName) {
+                  grouped[key]._languages.add(langName);
+                }
+
+                // Aggregate specific needs (category + subcategory pairs)
+                const spnCategory = record['progres_specificneed.progres_spncategory2name'];
+                const spnSubcategory = record['progres_specificneed.progres_spnsubcategory2name'];
+                if (spnCategory) {
+                  const exists = grouped[key]._specificNeeds.some(
+                    sn => sn.category === spnCategory && sn.subcategory === spnSubcategory
+                  );
+                  if (!exists) {
+                    grouped[key]._specificNeeds.push({
+                      category: spnCategory,
+                      subcategory: spnSubcategory,
+                      categoryId: record['progres_specificneed.specificneeds.progres_spncategory2'],
+                      subcategoryId: record['progres_specificneed.specificneeds.progres_spnsubcategory2']
+                    });
+                  }
+                }
               }
-            ]
-          }, {
-            headers: { "Ocp-Apim-Subscription-Key": "235af23dc65b45888f3eca393f545eb1" },
-          }).then(state => {
 
-            const data = state.data.Data.map(item => ({ ...item, progres_lpinterventionid: state.referrals[state.index].progres_lpinterventionid }));
+              // Convert to array and finalize
+              const dedupedData = Object.values(grouped).map(record => {
+                record._languages = Array.from(record._languages);
+                return record;
+              });
 
-            state.interventions.push(...data)
-            return state
-          }));
+              console.log(`SHP-2358 returned ${rawData.length} records, deduplicated to ${dedupedData.length}`);
+
+              state.interventions.push(...dedupedData);
+              return state;
+            })
+          );
 
     triggers:
       cron:
@@ -401,6 +479,11 @@ workflows:
         cron_expression: '00 00 * * *'
         enabled: false
     edges:
+      Send-Referrals-to-Primero->Send-Upload-Status-to-Ping:
+        source_job: Send-Referrals-to-Primero
+        target_job: Send-Upload-Status-to-Ping
+        condition_type: on_job_success
+        enabled: true
       cron->Retrieve-pending-referrals:
         source_trigger: cron
         target_job: Retrieve-pending-referrals
@@ -419,9 +502,524 @@ workflows:
         target_job: Send-Referrals-to-Primero
         condition_type: on_job_success
         enabled: true
-      Send-Referrals-to-Primero->Send-Upload-Status-to-Ping:
-        source_job: Send-Referrals-to-Primero
-        target_job: Send-Upload-Status-to-Ping
+  Copy-Flow1-2.-Send-Decision-to-Ping:
+    name: Copy Flow1-2. Send Decision to Ping
+    jobs:
+      Send-Decision-to-Ping:
+        name: Send Decision to Ping
+        adaptor: '@openfn/language-ping@1.0.0'
+        credential: hunter@openfn.org-Official-Ping-credentials
+        body: |
+          fn(state => {
+            const statusMap = {
+              'acknowledged': '125080003',
+              'rejected': '125080004'
+            };
+
+            const decisions = state.decision
+              .filter(d => {
+                if (d.status === 'pending') {
+                  console.log(`Skipping decision for ${d.progres_interventionnumber}: status is pending`);
+                  return false;
+                }
+                
+                const parts = d.progres_interventionnumber?.split(',') || [];
+                if (parts.length < 3 || !parts[1] || !parts[2]) {
+                  console.log(`Discarding old referral for case ${d.case_id}: progres_interventionnumber missing lpInterventionId or businessUnit. Value: "${d.progres_interventionnumber}"`);
+                  return false;
+                }
+                
+                return true;
+              })
+              .map(d => {
+                const [, lpInterventionId, businessUnit] = d.progres_interventionnumber.split(',');
+                const currentDate = new Date().toISOString().split('T')[0];
+                
+                const reasonText = d.closure_reason && d.closure_reason !== 'No reason specified.' 
+                  ? `: ${d.closure_reason}` 
+                  : '';
+                const comment = `Referral ${d.status} by PRIMERO${reasonText}`;
+
+                return {
+                  ExternalId: d.case_id,
+                  Attachments: [],
+                  Fields: [
+                    { Name: 'progres_lpinterventionid', Value: lpInterventionId },
+                    { Name: 'progres_businessunit', Value: businessUnit },
+                    { Name: 'progres_primerotransferstatus', Value: statusMap[d.status] || '125080001' },
+                    { Name: 'progres_primerotransferstatusdate', Value: currentDate },
+                    { Name: 'progres_primeroid', Value: d.case_id },
+                    { Name: 'progres_primerocaseworker', Value: d.primero_user },
+                    { Name: 'progres_comments_displayfield', Value: comment }
+                  ]
+                };
+              });
+
+            state.pingPayload = {
+              ShippingProcessId: 'SHP-2748',
+              InteropId: 'INT-1436',
+              Data: decisions
+            };
+
+            state.hasDecisionsToSend = decisions.length > 0;
+
+            if (state.hasDecisionsToSend) {
+              console.log('Decisions to send:', JSON.stringify(state.pingPayload, null, 2));
+            } else {
+              console.log('No valid decisions to send to PING - skipping POST');
+            }
+
+            return state;
+          });
+
+          fn(state => {
+            if (!state.hasDecisionsToSend) return state;
+
+            return http.post('/api/ingestion/v2/PNR-1363/data', state.pingPayload)(state);
+          });
+
+          fn(state => {
+            if (state.hasDecisionsToSend) {
+              console.log('Decision has been sent.');
+            }
+            return state;
+          });
+
+          fn(state => {
+            if (state.error) {
+              console.log(state.request);
+              let newError = state.error;
+              newError.config = 'REDACTED';
+              throw newError;
+            }
+            return state;
+          });
+
+          // fn(state => {
+          //   let lastRunDateTime = state.referralsToSend
+          //     .map(c => c.last_updated_at)
+          //     .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+
+          //   lastRunDateTime =
+          //     new Date(lastRunDateTime) > new Date()
+          //       ? lastRunDateTime
+          //       : new Date().toISOString();
+
+          //   console.log('New cursor value:', lastRunDateTime);
+          //   return { ...state, data: {}, references: [], lastRunDateTime };
+          // });
+      Get-Decisions-from-Primero:
+        name: Get Decisions from Primero
+        adaptor: '@openfn/language-primero@3.0.9'
+        credential: rediet@openfn.org-Primero-Gambella
+        body: |
+          const manualCursor = '2024-04-09T21:00:17.471Z';
+
+          getCases(
+              {
+                last_updated_at: `${state.lastRunDateTime || manualCursor}..`,
+                per: 2000, //to override paging default of 20 cases per page
+              }
+          )
+
+          fn(state => {
+            
+            console.log(
+              `Current cursor value: '${state.lastRunDateTime || manualCursor}'`
+            );
+            const { data, configuration } = state;
+            state.decision = []
+            console.log('Primero cases fetched for ids: ', data.map(c => c.case_id));
+                const today = new Date();
+                const yesterday = new Date(new Date().getTime());
+                yesterday.setDate(yesterday.getDate() - 1);
+
+                const referralsToSend = data.filter(
+                  (
+                    ref //check if the service was an external referral & the decision changed
+                  ) =>
+                    ref.services_section &&
+                    ref.services_section.some(
+                      service =>
+                        service.service_request_agency === 'UNHCR' &&
+                        service.service_referral === 'external_referral' &&
+                        (service.unhcr_referral_status === 'accepted' ||
+                          service.unhcr_referral_status === 'rejected')
+                    )
+                );
+
+                state.referralsToSend = referralsToSend;
+                if (referralsToSend.length === 0) {
+                  console.log(
+                    'No change in UNHCR Referral Status detected. No decisions to send to Ping.'
+                  );
+                  return state;
+                }
+                console.log('Number of matching referrals: ', referralsToSend.length);
+                return each(referralsToSend, state => {
+                  const { data } = state;
+                  const { services_section } = data;
+
+                  const allowedStatus = ['accepted', 'rejected'];
+                  return each(services_section, state => {
+                    if (
+                      state.data.service_referral === 'external_referral' &&
+                      allowedStatus.includes(state.data.unhcr_referral_status)
+                    ) {
+                      const decision = {
+                        case_id: data.case_id,
+                        primero_user: data.owned_by,
+                        progres_interventionnumber: state.data.progres_interventionnumber,
+                        status:
+                          state.data.unhcr_referral_status === 'accepted'
+                            ? 'acknowledged'
+                            : state.data.unhcr_referral_status === 'rejected'
+                            ? 'rejected'
+                            : 'Pending Acknowledgement',
+                        closure_reason:
+                          state.data.unhcr_referral_rejection_reason ||
+                          'No reason specified.',
+                        request_type: 'ReceiveDecisionOutgoingReferral', //default hardcode
+                      };
+                      const caseIdDisplay = data.case_id_display;
+                      console.log(
+                        `Decision to send to Ping for case_id ${decision.case_id} and progres_interventionnumber ${decision.progres_interventionnumber}`
+                      );
+                      console.log(`Primero case_id_display:  ${caseIdDisplay}`);
+                      console.log(`Decision status: ${decision.status}`);
+                      state.decision.push(decision)
+                      return state;
+                    }
+                    return state;
+                  })(state);
+                })(state);
+          });
+
+    triggers:
+      cron:
+        type: cron
+        cron_expression: '0 * * * *'
+        enabled: false
+    edges:
+      cron->Get-Decisions-from-Primero:
+        source_trigger: cron
+        target_job: Get-Decisions-from-Primero
+        condition_type: always
+        enabled: true
+      Get-Decisions-from-Primero->Send-Decision-to-Ping:
+        source_job: Get-Decisions-from-Primero
+        target_job: Send-Decision-to-Ping
+        condition_type: js_expression
+        condition_label: Has Decision
+        condition_expression: |
+          state.decision.length > 0
+
+        enabled: true
+  Flow-2-2.UNHCR-Ping-to-Primero:
+    name: Flow 2-2.UNHCR Ping to Primero
+    jobs:
+      Fetch-decision-records-from-proGres-via-PING:
+        name: Fetch decision records from proGres via PING
+        adaptor: '@openfn/language-ping@1.0.1'
+        credential: hunter@openfn.org-Official-Ping-credentials
+        body: |
+          
+          // Query params fails
+          http.post('/primes/fetch/paging/v3/retrievedatawithpaging', {
+            "ShippingProcessId": "SHP-2795",
+            "PartnerId": "PNR-1363",
+            "InteropID": "INT-1436",
+            "APIVersion": "V3",
+            "QueryParameters": [
+              // {
+              // "ParameterName": "{progres_interoperabilityreferralstatus}",
+              // "Value": "[125080001, 125080002]"
+              // }
+            ]
+          });
+
+          fn(state => {
+            const allowedStatuses = [125080001, 125080002];
+
+            state.referralIds = state.data.Data
+              .filter(item =>
+                allowedStatuses.includes(item.progres_interoperabilityreferralstatus)
+              )
+              .map(item => item.progres_interoperabilityreferralid);
+            state.data = {}
+            return state;
+          });
+
+      Fetch-full-decision-details:
+        name: Fetch full decision details
+        adaptor: '@openfn/language-ping@1.0.1'
+        credential: hunter@openfn.org-Official-Ping-credentials
+        body: |
+          fn(state =>{
+
+            state.decisionRecords = [];
+          return state
+          })
+
+          each('$.referralIds[*]', http.post('/primes/fetch/paging/v3/retrievedatawithpaging', {
+            "ShippingProcessId": "SHP-2796",
+            "PartnerId": "PNR-1363",
+            "InteropID": "INT-1436",
+            "APIVersion": "V3",
+            "QueryParameters": [
+              {
+              "ParameterName": "{record_ids}",
+              "Value": `${[$.data]}`
+              }
+            ]
+          }).then(state =>{
+
+            state.decisionRecords.push(state.data.Data[0])
+            return state
+          }))
+
+          fn(state =>{
+
+          return {decisionRecords:state.decisionRecords, data:{}, references:[]}
+          })
+      Map-decision-to-Primero-payload:
+        name: Map decision to Primero payload
+        adaptor: '@openfn/language-common@3.2.2'
+        credential: null
+        body: |
+          fn(state => {
+            state.decisionPayload = []
+            return state
+          })
+
+          function statusText(status) {
+            switch (status) {
+              case 125080001:
+              case 125080000:
+                return "accepted"
+              case 125080002:
+                return "rejected"
+              default:
+                return "accepted"
+
+            }
+          }
+
+          each('$.decisionRecords[*]', fn(state => {
+            const r = state.data;
+            // values differ if status is ...002, decision is ...001, and if status is ...001, decision is ...000
+            const status = r.progres_interoperabilityreferralstatus || r.progres_reviewdecision;
+            const case_id = "e20066dd-5ff9-4a9c-95ca-844d91ea1fa8" //r.progres_offlineid;
+            const service_id = r.progres_interoperabilityreferralnumber;
+            const service_type = r.progres_requestedservice; // proGres service GUID — used to match referral in Primero
+            const interoperability_referral_id = r.progres_interoperabilityreferralid; // proGres UUID — used to update status in PING after Primero sync
+
+            const payload = {
+              "case_id": case_id,
+              "service_id": service_id,
+              service_type,
+              interoperability_referral_id,
+              "type": "Referral",
+              "record_type": "case",
+              "status": statusText(status),
+              "rejected_reason": statusText(status) === "rejected"
+                ? (r.progres_interoperabiltyreferralrejectionreasonname || "Rejected in proGres (no reason provided)")
+                : null
+            }
+
+            state.decisionPayload.push(payload)
+            return state
+          }));
+
+          fn(state => {
+            return { decisionPayload: state.decisionPayload, data: {}, references: [] }
+          })
+      Update-Referral-Decision-in-Primero:
+        name: Update Referral Decision in Primero
+        adaptor: '@openfn/language-primero@4.0.8'
+        credential: rediet@openfn.org-Primero-Gambella-API-User
+        body: |
+          // Reverse lookup: proGres service GUID -> Primero service_type key
+          const serviceMap = {
+            legal_support: "7ad37dd0-0306-e611-80d9-00155d34051a",
+            medical: "f98e1516-0406-e611-80d9-00155d34051a",
+            shelter: "20db76a2-0306-e611-80d9-00155d34051a",
+            education_formal: "79f7aee2-309e-e911-80e6-001dd8b71fe6",
+            non_formal_education: "79f7aee2-309e-e911-80e6-001dd8b71fe6",
+            cash_assistance: "14d89ab0-0306-e611-80d9-00155d34051a",
+            documentation: "f6dd29c1-0306-e611-80d9-00155d34051a",
+            livelihoods: "80c37762-0406-e611-80d9-00155d34051a",
+            nutrition: "fab93078-7005-e611-80d9-00155d34051a",
+            basic_psychosocial_support: "3408e901-0406-e611-80d9-00155d34051a",
+            specialized_mhpss_services: "3408e901-0406-e611-80d9-00155d34051a",
+            focuses_non_specialized_mhpss_care: "3408e901-0406-e611-80d9-00155d34051a",
+            relocation: "ca34f86f-0406-e611-80d9-00155d34051a",
+            durable_solution_in_coordination_with_unhcr: "ca34f86f-0406-e611-80d9-00155d34051a",
+            other_please_specify: "e3a13f7d-0406-e611-80d9-00155d34051a",
+          };
+
+          const reverseServiceMap = Object.fromEntries(
+            Object.entries(serviceMap).map(([k, v]) => [v, k])
+          );
+
+          fn(state => {
+            state.syncedReferralIds = [];
+            return state;
+          });
+
+          const findReferral = (referrals, service_type_guid) => {
+            const primeroServiceType = reverseServiceMap[service_type_guid];
+            const matches = referrals.filter(r =>
+              r.service_type === primeroServiceType &&
+              r.referred_to_agency === 'UNHCR'
+            );
+            if (matches.length === 1) return matches[0];
+            if (matches.length === 0) return null;
+            return 'ambiguous';
+          };
+
+          each('$.decisionPayload[*]', fn(state => {
+            const { case_id, service_type, interoperability_referral_id, ...decision } = state.data;
+
+            console.log(`Processing decision for case_id: ${case_id}, service_type GUID: ${service_type}`);
+
+            return getReferrals({ externalId: 'case_id', id: case_id })(state)
+              .then(state => {
+                const referrals = state.data;
+
+                console.log('Referrals returned:', JSON.stringify(referrals.map(r => ({
+                  id: r.id,
+                  record_id: r.record_id,   // ← add this
+                  service_type: r.service_type,
+                  referred_to_agency: r.referred_to_agency
+                }))));
+
+                // TODO: revert to findReferral() once test data has service_type/referred_to_agency populated,
+                // or once progres_orgreferralid is available from SHP-2796 for exact matching
+                let referral;
+                const hasMatchableFields = referrals.some(r => r.service_type || r.referred_to_agency);
+
+                if (hasMatchableFields) {
+                  referral = findReferral(referrals, service_type);
+                  if (!referral) {
+                    console.log(`No matching UNHCR referral found for case ${case_id} with service_type ${service_type}. Skipping.`);
+                    return state;
+                  }
+                  if (referral === 'ambiguous') {
+                    console.log(`Multiple UNHCR referrals found for case ${case_id} with same service_type. Cannot determine which to update. Skipping.`);
+                    return state;
+                  }
+                } else {
+                  // TEMPORARY: referral fields not populated in test data, take the only referral available
+                  console.log(`WARNING: Referral fields not available for matching on case ${case_id}. Using first referral as fallback (test mode only).`);
+                  if (referrals.length !== 1) {
+                    console.log(`Cannot use fallback: ${referrals.length} referrals found for case ${case_id}. Skipping.`);
+                    return state;
+                  }
+                  referral = referrals[0];
+                }
+
+                decision['id'] = referral.id;
+                //decision['record_id'] = referral.record_id;
+
+                console.log(`Found referral ${referral.id} for case ${case_id}. Sending decision: ${decision.status}`);
+
+                return updateReferral(
+                  {
+                    caseExternalId: 'case_id',   // was: externalId
+                    caseId: case_id,             // was: id (and was being set to the case_id)
+                    id: referral.id,             // was: referral_id
+                    data: decision,
+                  },
+                  state => {
+                    console.log(`Referral decision update successful for case: ${case_id}`);
+                    state.syncedReferralIds.push(interoperability_referral_id);
+                    return state;
+                  }
+                )(state);
+              })
+              .catch(error => {
+                console.log({ error });
+                throw new Error(`No case found for ${case_id}. Referral decision cannot be synced.`);
+              });
+          }));
+      Save-Status-in-Progres:
+        name: Save Status in Progres
+        adaptor: '@openfn/language-ping@1.0.2'
+        credential: hunter@openfn.org-Official-Ping-credentials
+        body: |
+          fn(state => {
+            const failed = state.decisionPayload
+              .filter(item => item.interoperability_referral_id)
+              .filter(item => !state.syncedReferralIds.includes(item.interoperability_referral_id));
+
+            if (failed.length > 0) {
+              console.log(`Skipping PING status update for ${failed.length} referral(s) that failed to sync with Primero. They will be retried on the next run.`);
+              failed.forEach(item =>
+                console.log(`  - Skipped referral: ${item.interoperability_referral_id} (case: ${item.case_id})`)
+              );
+            }
+
+            state.pingStatusPayloads = state.decisionPayload
+              .filter(item => item.interoperability_referral_id)
+              .filter(item => state.syncedReferralIds.includes(item.interoperability_referral_id))
+              .map(item => ({
+                "ExternalId": item.interoperability_referral_id,
+                "Attachments": [],
+                "Fields": [
+                  { "Name": "progres_interoperabilityreferralid", "Value": item.interoperability_referral_id },
+                  { "Name": "progres_interoperabilityreferralstatus", "Value": "125080003" },
+                  { "Name": "progres_comments", "Value": "Referral decision synced with PRIMERO via OpenFn" }
+                ]
+              }));
+
+            console.log(`Preparing to mark ${state.pingStatusPayloads.length} referral(s) as Synced with PRIMERO`);
+            return state;
+          });
+
+          http.post('/api/ingestion/v2/PNR-1363/data', state => ({
+            "ShippingProcessId": "SHP-2284",
+            "InteropId": "INT-1436",
+            "Data": state.pingStatusPayloads
+          })).then(state => {
+            console.log(`Status updated to Synced with PRIMERO for ${state.pingStatusPayloads.length} referral(s)`);
+            return state;
+          }).catch(error => {
+            console.log(`Failed to update PING status. Error: ${error.message}`);
+            throw error;
+          });
+    triggers:
+      cron:
+        type: cron
+        cron_expression: '0 0 * * *'
+        enabled: false
+    edges:
+      cron->Fetch-decision-records-from-proGres-via-PING:
+        source_trigger: cron
+        target_job: Fetch-decision-records-from-proGres-via-PING
+        condition_type: always
+        enabled: true
+      Fetch-decision-records-from-proGres-via-PING->Fetch-full-decision-details:
+        source_job: Fetch-decision-records-from-proGres-via-PING
+        target_job: Fetch-full-decision-details
+        condition_type: js_expression
+        condition_label: null
+        condition_expression: |
+          !state.errors && state.referralIds && state.referralIds.length > 0
+        enabled: true
+      Fetch-full-decision-details->Map-decision-to-Primero-payload:
+        source_job: Fetch-full-decision-details
+        target_job: Map-decision-to-Primero-payload
+        condition_type: on_job_success
+        enabled: true
+      Map-decision-to-Primero-payload->Update-Referral-Decision-in-Primero:
+        source_job: Map-decision-to-Primero-payload
+        target_job: Update-Referral-Decision-in-Primero
+        condition_type: on_job_success
+        enabled: true
+      Update-Referral-Decision-in-Primero->Save-Status-in-Progres:
+        source_job: Update-Referral-Decision-in-Primero
+        target_job: Save-Status-in-Progres
         condition_type: on_job_success
         enabled: true
   Flow1-1.-Send-Referrals-to-Primero:
@@ -729,6 +1327,36 @@ workflows:
             '$.interventions[*]',//
             fn(state => {
               const { data } = state;
+
+               // ========== ADD SIMULATED ERRORS HERE ==========
+              const businessErrorTestCases = ['803-26-PRTITV-1001564', 'H9B-26-PRTITV-1001565'];
+              const technicalErrorTestCases = ['803-26-PRTITV-1001567', '803-26-PRTITV-1001568'];
+
+              const interventionNumber = data.progres_interventionnumber;
+
+              if (businessErrorTestCases.includes(interventionNumber)) {
+                const reason = `Validation failed: Missing required field 'progres_individual.individuals.progres_dateofbirth' for intervention ${interventionNumber}`;
+                console.log(`[TEST] Business error simulated: ${reason}`);
+                state.failedRecords.push({
+                  progres_lpinterventionid: data.progres_lpinterventionid,
+                  progres_businessunit: data.progres_businessunit,
+                  reason: reason
+                });
+                return state;
+              }
+
+              if (technicalErrorTestCases.includes(interventionNumber)) {
+                const reason = `Primero API error: Service unavailable (503) - Connection timeout after 30000ms for intervention ${interventionNumber}`;
+                console.log(`[TEST] Technical error simulated: ${reason}`);
+                state.failedRecords.push({
+                  progres_lpinterventionid: data.progres_lpinterventionid,
+                  progres_businessunit: data.progres_businessunit,
+                  reason: reason
+                });
+                return state;
+              }
+              // ========== END SIMULATED ERRORS ==========
+
               const calculateAge = dob => {
                 const diff = Date.now() - dob.getTime();
                 const age_dt = new Date(diff);
@@ -996,7 +1624,7 @@ workflows:
               // Store record identifiers for tracking
               const recordId = data.progres_lpinterventionid;
               const businessUnit = data.progres_businessunit;
-              const interventionNumber = data.progres_interventionnumber;
+              // const interventionNumber = data.progres_interventionnumber;
 
               return getCases(
                 {
@@ -1336,6 +1964,14 @@ workflows:
                 })(state);
           });
 
+      Ping:
+        name: Ping
+        adaptor: '@openfn/language-ping@1.0.0'
+        credential: null
+        body: |
+          // Check out the Job Writing Guide for help getting started:
+          // https://docs.openfn.org/documentation/jobs/job-writing-guide
+
     triggers:
       cron:
         type: cron
@@ -1355,4 +1991,586 @@ workflows:
         condition_expression: |
           state.decision.length > 0
 
+        enabled: true
+      Send-Decision-to-Ping->Ping:
+        source_job: Send-Decision-to-Ping
+        target_job: Ping
+        condition_type: on_job_success
+        enabled: true
+  Flow2-1.-Get-Referrals-from-Primero:
+    name: Flow2-1. Get Referrals from Primero
+    jobs:
+      Flow2-1-Get-Referrals-from-Primero:
+        name: Flow2-1 Get Referrals from Primero
+        adaptor: '@openfn/language-primero@4.0.8'
+        credential: rediet@openfn.org-Primero-Gambella-API-User
+        body: |
+          // Set up a manual cursor and referrals array.
+          fn(state => {
+            console.log('Last sync end date:', state.lastRunDateTime);
+            const manualCursor = '2022-08-09T10:40:04.033Z';
+            const cursor = state.lastRunDateTime || manualCursor;
+            return { ...state, referralIds: [], referralsByServiceId: {}, cursor };
+          });
+          getCases(
+            {
+              remote: true,
+              // 'associated_user_names[0]': 'unhcr_cw@cpims-gambella.primero.org',
+              last_updated_at: `${$.cursor}..`,
+            })
+          // Get cases with UNHCR referrals
+          fn(state => {
+            return {
+              ...state,
+              cases: state.data.filter(
+                c =>
+                  c.services_section &&
+                  c.services_section.length > 0 &&
+                  c.services_section.some(
+                    s => s.service_implementing_agency === 'UNHCR'
+                  )
+              )
+            }
+          })
+
+
+
+          // Get referral details for each UNCHR case which have been created since the last run
+          each(
+            '$.cases[*]',
+            getReferrals({ externalId: 'record_id', id: dataValue('id') }, state => {
+              // STEP 3: filter referrals where 'created_at_date' >= lastRUnDateTime || manualCursor
+              state.data
+                .filter(r => new Date(r.created_at) >= new Date(state.cursor))
+                .forEach(r => {
+                  state.referralIds.push(r.service_record_id);
+                  state.referralsByServiceId[r.service_record_id] =
+                    r.created_at.split('T')[0]; // YYYY-MM-DD
+                });
+              return state;
+            })
+          );
+
+          fn(state => ({
+            ...state,
+            cases: state.cases.map(c => ({
+              ...c,
+              services_section: c.services_section
+                .filter(s => state.referralIds.includes(s.unique_id))
+                .filter(s => s.service_implementing_agency === 'UNHCR'),
+            })),
+          }));
+
+          // After job completes successfully, update cursor
+          fn(state => {
+            let lastRunDateTime = state.cases
+              .map(c => c.last_updated_at)
+              .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+
+            lastRunDateTime =
+              new Date(lastRunDateTime) > new Date()
+                ? lastRunDateTime
+                : new Date().toISOString();
+
+            console.log('Next sync start date:', lastRunDateTime);
+            return { ...state, data: {}, references: [], lastRunDateTime };
+          });
+
+
+          fn(state => {
+            //== Logging Primero referral before we map to DTP Interoperability form
+            const caseid = state.cases
+              ? state.cases.map(c => c.case_id) || state.cases.id
+              : undefined;
+            console.log(
+              '# Primero referrals to send to Progresv4/DTP :: ',
+              caseid.length
+            );
+            console.log('Primero case id(s) :: ', caseid);
+
+            if (caseid.length > 0) {
+              console.log('Finding referring user contact info in Primero...');
+              //== Fetching Primero user data to complete referral mappings below
+              return http.get(`/users?per=100000&page=1`)(state)
+                .then(({ data }) => {
+                  const users = data.data;
+                  const cpimsAdmin = users.find(
+                    u => u.email === 'niway.derbew@plan-international.org'
+                  );
+                  console.log('Referring user contact info fetched...');
+                  return { ...state, users, cpimsAdmin };
+                });
+            }
+            return { ...state };
+          });
+
+      Flow2-2-Send-Referral-to-Ping:
+        name: Flow2-2 Send Referral to Ping
+        adaptor: '@openfn/language-ping@1.0.1'
+        credential: hunter@openfn.org-Official-Ping-credentials
+        body: |
+          fn(state => {
+            state.sphTransactionIds = []
+            return state
+          })
+
+          each(
+            '$.cases[*]',
+            fn(state => {
+              console.log('Searching for unhcr service to send as referrals...');
+              const { data, users, cpimsAdmin } = state;
+
+              const { services_section } = data;
+
+              const user = users.find(user => user.user_name === data.owned_by);
+
+              // provide cpimsAdmin info if caseworker profile is not completed
+              const cpimsAdminEmail = cpimsAdmin
+                ? cpimsAdmin.email
+                : 'notavailable@primero.org';
+              const cpimsAdminName = cpimsAdmin ? cpimsAdmin.full_name : 'CPIMS+';
+              const cpimsAdminPhone = cpimsAdmin ? cpimsAdmin.phone : '0000000000';
+              const cpimsAdminPosition = 'CPIMS+ Administrator';
+
+              const serviceMap = {
+                legal_support: "7ad37dd0-0306-e611-80d9-00155d34051a", // Legal / Protection Counselling
+                medical: "f98e1516-0406-e611-80d9-00155d34051a", // Health Assistance
+                shelter: "20db76a2-0306-e611-80d9-00155d34051a", // Shelter Assistance
+                education_formal: "79f7aee2-309e-e911-80e6-001dd8b71fe6", // Education
+                non_formal_education: "79f7aee2-309e-e911-80e6-001dd8b71fe6",
+                cash_assistance: "14d89ab0-0306-e611-80d9-00155d34051a", // Cash Assistance
+                documentation: "f6dd29c1-0306-e611-80d9-00155d34051a", // Documentation
+                livelihoods: "80c37762-0406-e611-80d9-00155d34051a", // Livelihoods
+                nutrition: "fab93078-7005-e611-80d9-00155d34051a", // Food Assistance
+                basic_psychosocial_support: "3408e901-0406-e611-80d9-00155d34051a", // Psycho-social Assistance
+                specialized_mhpss_services: "3408e901-0406-e611-80d9-00155d34051a",
+                focuses_non_specialized_mhpss_care: "3408e901-0406-e611-80d9-00155d34051a",
+                relocation: "ca34f86f-0406-e611-80d9-00155d34051a", // Resettlement
+                durable_solution_in_coordination_with_unhcr: "ca34f86f-0406-e611-80d9-00155d34051a",
+                other_please_specify: "e3a13f7d-0406-e611-80d9-00155d34051a", // Other
+              };
+              state.serviceMap = serviceMap;
+
+              // Primero protection_concerns ID -> ProGres spneedcategory GUID
+              const specialNeedsMap = {
+                // ProGres: Child at risk
+                sexual_exploitation: "a1c5b4fb-8f76-e611-80c9-00155d340529",
+                slavery_sale_abduction: "a1c5b4fb-8f76-e611-80c9-00155d340529",
+                child_labour: "a1c5b4fb-8f76-e611-80c9-00155d340529",
+                hazardous_work: "a1c5b4fb-8f76-e611-80c9-00155d340529",
+                worst_forms_of_child_labor: "a1c5b4fb-8f76-e611-80c9-00155d340529",
+                street_child: "a1c5b4fb-8f76-e611-80c9-00155d340529",
+                child_mother: "a1c5b4fb-8f76-e611-80c9-00155d340529",
+                child_headed_household: "a1c5b4fb-8f76-e611-80c9-00155d340529",
+                child_survivor_of_explosive: "a1c5b4fb-8f76-e611-80c9-00155d340529",
+                child_marriage: "a1c5b4fb-8f76-e611-80c9-00155d340529",
+                pregnancy_child_parent: "a1c5b4fb-8f76-e611-80c9-00155d340529",
+                child_neglect: "a1c5b4fb-8f76-e611-80c9-00155d340529",
+                physical_abuse: "a1c5b4fb-8f76-e611-80c9-00155d340529",
+                emotional_abuse: "a1c5b4fb-8f76-e611-80c9-00155d340529",
+                neglect: "a1c5b4fb-8f76-e611-80c9-00155d340529",
+                abandonment: "a1c5b4fb-8f76-e611-80c9-00155d340529",
+
+                // ProGres: Unaccompanied or separated child
+                unaccompanied: "abc5b4fb-8f76-e611-80c9-00155d340529",
+                separated: "abc5b4fb-8f76-e611-80c9-00155d340529",
+                orphan: "abc5b4fb-8f76-e611-80c9-00155d340529",
+
+                // ProGres: Disability
+                disabled: "a3c5b4fb-8f76-e611-80c9-00155d340529",
+                functional_difficulty_seeing: "a3c5b4fb-8f76-e611-80c9-00155d340529",
+                functional_difficulty_hearing: "a3c5b4fb-8f76-e611-80c9-00155d340529",
+                functional_difficulty_walking: "a3c5b4fb-8f76-e611-80c9-00155d340529",
+                functional_difficulty_remembering: "a3c5b4fb-8f76-e611-80c9-00155d340529",
+                difficulty_with_self_care: "a3c5b4fb-8f76-e611-80c9-00155d340529",
+                difficulty_communicating: "a3c5b4fb-8f76-e611-80c9-00155d340529",
+
+                // ProGres: Serious medical condition
+                serious_health_issue: "adc5b4fb-8f76-e611-80c9-00155d340529",
+                serious_medical_condition: "adc5b4fb-8f76-e611-80c9-00155d340529",
+
+                // ProGres: SGBV (including sv_* and sgbv__* codes)
+                rape: "b1c5b4fb-8f76-e611-80c9-00155d340529",
+                sexual_abuse_violence: "b1c5b4fb-8f76-e611-80c9-00155d340529",
+                sgbv__rape_sodomy: "b1c5b4fb-8f76-e611-80c9-00155d340529",
+                sgbv__physical_assault: "b1c5b4fb-8f76-e611-80c9-00155d340529",
+                sgbv__sexual_assault: "b1c5b4fb-8f76-e611-80c9-00155d340529",
+                sgbv__child_marriage: "b1c5b4fb-8f76-e611-80c9-00155d340529",
+                sgbv__sex_for_goods_services: "b1c5b4fb-8f76-e611-80c9-00155d340529",
+                sgbv__teenage_pregnancy: "b1c5b4fb-8f76-e611-80c9-00155d340529",
+                sgbv__psychological_emotional_abuse: "b1c5b4fb-8f76-e611-80c9-00155d340529",
+                sgbv__fgm: "b1c5b4fb-8f76-e611-80c9-00155d340529",
+                sgbv__commercial_sexual_exploitation: "b1c5b4fb-8f76-e611-80c9-00155d340529",
+                sv_va__victim__survivor_of__sgbv_in_country_of_asylum_5422ac9: "b1c5b4fb-8f76-e611-80c9-00155d340529",
+                sv_vf__victim__survivor_of__sgbv_during_flight__64638f7: "b1c5b4fb-8f76-e611-80c9-00155d340529",
+                sv_vo__victim__survivor_of__sgbv_in_country_of_origin_a3f9c27: "b1c5b4fb-8f76-e611-80c9-00155d340529",
+                sv_gm__female_genital_mutilation_132d9d6: "b1c5b4fb-8f76-e611-80c9-00155d340529",
+                sv_hp__harmful_traditional_practices_c68c552: "b1c5b4fb-8f76-e611-80c9-00155d340529",
+                sv_hk__threat_of_honour_killing_violence_e3b4fbb: "b1c5b4fb-8f76-e611-80c9-00155d340529",
+                sv_fm__forced__early_marriage__b1a8ba0: "b1c5b4fb-8f76-e611-80c9-00155d340529",
+                sv_ss__survival_sex__0a5cc10: "b1c5b4fb-8f76-e611-80c9-00155d340529",
+
+                // ProGres: Torture
+                tr_pi__psychological_and_or_physical_impairment_due_to_torture_be29dff: "b3c5b4fb-8f76-e611-80c9-00155d340529",
+                tr_ho__forced_to_egregious_acts_ff05b1c: "b3c5b4fb-8f76-e611-80c9-00155d340529",
+                tr_wv__witness_of_violence_to_other_74e79f8: "b3c5b4fb-8f76-e611-80c9-00155d340529",
+
+                // ProGres: Specific legal and physical protection needs (LP-* codes)
+                lp_dt__detained_held_elsewhere_f8f8d21: "a9c5b4fb-8f76-e611-80c9-00155d340529",
+                lp_ih__in_hiding_a554ced: "a9c5b4fb-8f76-e611-80c9-00155d340529",
+                lp_wp__absence_of_witness_protection_89f64dc: "a9c5b4fb-8f76-e611-80c9-00155d340529",
+                lp_an__violence__abuse_or_neglect_b424522: "a9c5b4fb-8f76-e611-80c9-00155d340529",
+                lp_rp__at_risk_due_to_profile_fb7c70c: "a9c5b4fb-8f76-e611-80c9-00155d340529",
+                lp_ms__marginalized_from_society_or_community_e07cb83: "a9c5b4fb-8f76-e611-80c9-00155d340529",
+                lp_ls__lack_of_durable_solutions_prospects_f9e8a11: "a9c5b4fb-8f76-e611-80c9-00155d340529",
+                lp_ap__alleged_perpetrator_db9e2f5: "a9c5b4fb-8f76-e611-80c9-00155d340529",
+                lp_cr__criminal_record_5a18ced: "a9c5b4fb-8f76-e611-80c9-00155d340529",
+                lp_st__security_threat_to_unhcr_partner_staff_or_others_28d5c9c: "a9c5b4fb-8f76-e611-80c9-00155d340529",
+                lp_af__formerly_associated_with_armed_forces_or_groups_ac746df: "a9c5b4fb-8f76-e611-80c9-00155d340529",
+              };
+
+              state.specialNeedsMap = specialNeedsMap;
+
+              const languageMap = {
+                language1: 'Anyuak',
+                language2: 'Nuer',
+                language3: 'Dinka',
+                language4: 'Bari',
+                language5: 'Amharic',
+                language6: 'Other',
+                language7: 'Bembe',
+                language8: 'Somali',
+                language10: 'Acholi',
+                murle_fce1c91: 'Murle',
+                if_other_language__please_specify_335944b: 'Other',
+                _amharic: 'Amharic',
+                _arabic: 'Arabic',
+                _boma: 'Boma',
+                _didinga: 'Didinga',
+                _english: 'English',
+                _french: 'French',
+                _karamojong: 'Karamojong',
+                _kifulero: 'Fuliiru, Kifulero',
+                _kikongo: 'Kikongo',
+                _kinyabiyisha: 'Kinyabwisha',
+                _kinyarwanda: 'Rwanda, Kinyarwanda',
+                _kirundi: 'Rundi, Kirundi',
+                _lingala: 'Lingala',
+                _lokoya: 'Lokoya',
+                _lopit: 'Lopit',
+                _luo: 'Luo',
+                _makonde: 'Makonde',
+                _mashi: 'Mashi',
+                _moro: 'Moro',
+                _murle: 'Murle',
+                _oromo: 'Oromo',
+                _sign_language: 'Sign Language',
+                _tira: 'Tira',
+                _toposa: 'Toposa',
+                _toro: 'Toro',
+              };
+
+              let lang = [];
+              data.language
+                ? data.language.forEach(l => lang.push(languageMap[l]))
+                : lang.push(languageMap['language6']);
+
+              const referrals = [];
+
+
+              //== For every 1 Primero service, send 1 DTP referral =======//
+              return each(services_section, state => {
+                const service = state.data;
+                const referralDate = state.referralsByServiceId?.[service.unique_id];
+                if (!referralDate) throw new Error(`Missing progres_referraldate for service.unique_id=${service.unique_id}`);
+                const concerns = Array.isArray(data.protection_concerns)
+                  ? data.protection_concerns
+                  : [];
+                //===============================================================================//
+                //=== Mappings for Primero referral --> Progres v4 ==============================//
+                const referralMapping = {
+                  //== Fields pulled from Primero user - defined in case.owned_by =======//
+                  //== Default to sending the CPIMS Admin details if caseworker info not available ==//
+                  primero_user: data.owned_by,
+                  position: user && user.position ? user.position : cpimsAdminPosition,
+                  email: user && user.email ? user.email : cpimsAdminEmail,
+                  phone: user && user.phone ? user.phone : cpimsAdminPhone,
+                  full_name: user && user.full_name ? user.full_name : cpimsAdminName,
+                  //=================================================================//
+                  request_type: 'ReceiveIncomingReferral',
+                  service_implementing_agency: 'UNICEF',
+                  //service_implementing_agency: 'ProGres - Testing', //TODO: USE MAPPING BELOW FOR GO-LIVE
+                  // service_implementing_agency:
+                  //   service.service_implementing_agency === 'UNHCR'
+                  //     ? 'UNICEF'
+                  //     : service.service_implementing_agency,
+                  service_response_day_time: service.service_response_day_time,
+                  service_type: serviceMap[service.service_type],
+                  service_type_other: service.service_type_other
+                    ? service.service_type_other
+                    : null,
+                  service_referral_notes: service.service_referral_notes
+                    ? service.service_referral_notes
+                    : 'Primero referral',
+                  owned_by_agency_id: 'UNICEF', //E.g., UNICEF, Save the Children International
+                  unhcr_individual_no: data.unhcr_individual_no,
+                  unhcr_id_no: data.unhcr_id_no,
+                  name_first: data.name_first,
+                  name_last: data.name_last,
+                  name_middle: data.name_middle ? data.name_middle : null,
+                  name_nickname: data.name_nickname ? data.name_nickname : null,
+                  date_of_birth: data.date_of_birth
+                    ? new Date(data.date_of_birth).toISOString().split('T')[0]
+                    : undefined,
+                  sex:
+                    data.sex === 'unknown_4b34795'
+                      ? 'unknown'
+                      : data.sex === 'other_b25f252'
+                        ? 'other'
+                        : data.sex,
+                  address_current: data.address_current,
+                  telephone_current: data.telephone_current
+                    ? data.telephone_current.toString()
+                    : null,
+                  language: lang[0] ? lang.join(', ') : null, //e.g., 'language1,language2'
+                  id: `${data.case_id}#${service.unique_id.substr(-12)}`,
+                  specialNeedsMap: concerns.map(c => specialNeedsMap[c]).find(Boolean) || null
+                };
+                //===== End of referral mapping ================================================//
+
+                const shortid = data.case_id_display;
+                const recordid = referralMapping.id;
+                console.log(
+                  'Mapping Primero data to DTP for referral with id: ',
+                  recordid
+                );
+                console.log('case_id_display:', shortid);
+                // console.log(referralMapping)
+                //=== Here we send the referrals to DTP ======///
+                return http.post('/api/ingestion/v2/PNR-1363/asyncdata', {
+                  "ShippingProcessId": "SHP-2731",
+                  "InteropID": "INT-1436",
+                  "APIVersion": "V2",
+                  Data: [
+                    {
+                      "ExternalId": data.case_id,
+                      "ExternalGUID": data.id,
+                      "Fields": [{
+                        "Name": "progres_externalguid",
+                        "Value": data.id
+                      },
+                      {
+                        "Name": "progres_externalid",
+                        "Value": data.case_id
+                      },
+                      {
+                        "Name": "progres_businessunit",
+                        "Value": "577ccdf6-86de-e811-80d8-001dd8b71fe3"
+                      },
+                      {
+                        "Name": "progres_organizationfrom",
+                        "Value": "c00582a6-d8f6-f011-8406-6045bd8ea5fb"
+                      },
+                      {
+                        "Name": "progres_orgreferredby",
+                        "Value": "Primero CP"
+                      },
+                      {
+                        "Name": "progres_orgposition",
+                        "Value": user && user.position ? user.position : cpimsAdminPosition
+                      },
+                      {
+                        "Name": "progres_orgemail",
+                        "Value": user && user.email ? user.email : cpimsAdminEmail
+                      },
+                      {
+                        "Name": "progres_orgphonenumber",
+                        "Value": user && user.phone ? user.phone : cpimsAdminPhone
+                      },
+                      {
+                        "Name": "progres_orgreferralid",
+                        "Value": service.unique_id
+                      },
+                      {
+                        "Name": "progres_referraldate",
+                        "Value": referralDate
+                      },
+                      {
+                        "Name": "progres_otherrequestedservices",
+                        "Value": service.service_type_other
+                          ? service.service_type_other
+                          : null
+                      },
+                      {
+                        "Name": "progres_requestedservice",
+                        "Value": referralMapping["service_type"] ? referralMapping["service_type"] : "7ad37dd0-0306-e611-80d9-00155d34051a"
+                      },
+
+                      {
+                        "Name": "progres_spneedcategory",
+                        "Value": referralMapping["specialNeedsMap"]
+                      },
+                      {
+                        "Name": "progres_reasonforreferral",
+                        "Value": service.service_referral_notes
+                          ? service.service_referral_notes
+                          : 'Primero referral',
+                      },
+                      {
+                        "Name": "progres_pocphonenumber",
+                        "Value": data.telephone_current
+                          ? data.telephone_current.toString()
+                          : null,
+                      },
+                      {
+                        "Name": "progres_pocaddress",
+                        "Value": data.address_current,
+                      },
+                      {
+                        "Name": "progres_pocotheridnumber",
+                        "Value": data.unhcr_id_no
+                      },
+                      {
+                        "Name": "progres_pocdateofbirth",
+                        "Value": data.date_of_birth
+                          ? new Date(data.date_of_birth).toISOString().split('T')[0]
+                          : undefined,
+
+                      },
+                      {
+                        "Name": "progres_pocsex",
+                        "Value": data.sex === 'female' ? '125080000' : data.sex === 'male' ? '125080001' : "Unknown"
+                      },
+                      {
+                        "Name": "progres_poclastname",
+                        "Value": data.name_last
+                      },
+                      {
+                        "Name": "progres_pocmiddlename",
+                        "Value": data.name_middle
+                      },
+                      {
+                        "Name": "progres_pocfirstname",
+                        "Value": data.name_first
+                      },
+                      {
+                        "Name": "progres_unhcrid",
+                        "Value": data.unhcr_individual_no ?? data.unhcr_id_no
+                      }
+
+                      ]
+                    }
+                  ]
+                })(state)
+                  .then((state) => {
+                    console.log({ state: state.data['SPHTransactionId'] })
+                    if (state.data['SPHTransactionId']) {
+                      console.log('are we here')
+                      state.sphTransactionIds.push(state.data['SPHTransactionId']);
+
+                    } else {
+                      console.warn('SPHTransactionId missing from response')
+                    }
+
+                    console.log('Response uploaded to DTP/Progres.');
+                    console.log({ ids: state.sphTransactionIds })
+                    return state;
+                  })
+                  .catch(error => {
+                    const safeError = error;
+                    safeError.config = '***';
+                    safeError.request = '***';
+                    safeError.response = {
+                      ...safeError.response,
+                      config: '***',
+                      request: '***',
+                    };
+                    throw safeError;
+                  });
+                return state;
+              })(state);
+            })
+          );
+
+      Check-Status:
+        name: Check Status
+        adaptor: '@openfn/language-ping@1.0.1'
+        credential: hunter@openfn.org-Official-Ping-credentials
+        body: |
+          function repairAndParseOuter(dataStr) {
+            // Replace:  "Data": "{ ... }"
+            // With:     "Data": "{\"...\"}"
+            const repaired = dataStr.replace(
+              /"Data"\s*:\s*"\{([\s\S]*?)\}"\s*,/g,
+              (match, inner) => {
+                // Escape any unescaped quotes inside the inner JSON object
+                const fixedInner = inner.replace(/"/g, '\\"');
+                return `"Data":"{${fixedInner}}",`;
+              }
+            );
+
+            return JSON.parse(repaired);
+          }
+
+          function parseInnerDataField(obj) {
+            if (!Array.isArray(obj)) return obj;
+
+            return obj.map(item => {
+              if (typeof item.Data === "string" && item.Data.trim().startsWith("{")) {
+                try {
+                  item.Data = JSON.parse(item.Data);
+                } catch {
+                  // leave as string if it still fails
+                }
+              }
+              return item;
+            });
+          }
+
+          each('$.sphTransactionIds[*]', http.post('/primes/ingestion/checkstatus/v1/pingdata', {
+            "ShippingProcessId": "SHP-2731",
+            "InteropID": "INT-1436",
+            "PartnerId": "PNR-1363",
+            "SPHTransactionId": $.data
+          }).then(state => {
+            const raw = state.data.Data;
+
+            if (!raw) {
+              console.log('No Data returned for this transaction. Full response:', JSON.stringify(state.data, null, 2));
+              return state;
+            }
+
+            let pretty;
+            if (typeof raw === 'string') {
+              const outerArr = repairAndParseOuter(raw);
+              pretty = parseInnerDataField(outerArr);
+            } else {
+              // Already parsed (object or array)
+              pretty = Array.isArray(raw) ? parseInnerDataField(raw) : raw;
+            }
+
+            console.log(JSON.stringify(pretty, null, 2));
+            return state;
+          }))
+
+    triggers:
+      cron:
+        type: cron
+        cron_expression: '0 * * * *'
+        enabled: false
+    edges:
+      cron->Flow2-1-Get-Referrals-from-Primero:
+        source_trigger: cron
+        target_job: Flow2-1-Get-Referrals-from-Primero
+        condition_type: always
+        enabled: true
+      Flow2-1-Get-Referrals-from-Primero->Flow2-2-Send-Referral-to-Ping:
+        source_job: Flow2-1-Get-Referrals-from-Primero
+        target_job: Flow2-2-Send-Referral-to-Ping
+        condition_type: on_job_success
+        enabled: true
+      Flow2-2-Send-Referral-to-Ping->Check-Status:
+        source_job: Flow2-2-Send-Referral-to-Ping
+        target_job: Check-Status
+        condition_type: on_job_success
         enabled: true
