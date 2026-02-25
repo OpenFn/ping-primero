@@ -741,7 +741,17 @@ workflows:
           fn(state => {
             const allowedStatuses = [125080001, 125080002];
 
-            state.referralIds = state.data.Data
+            const raw = state.data?.Data;
+
+            // If PING returns "No Data Available", treat it as empty
+            if (!raw || raw === "No Data Available") {
+              console.log("No decision records returned from PING.");
+              state.referralIds = [];
+              state.data = {};
+              return state;
+            }
+
+            state.referralIds = raw
               .filter(item =>
                 allowedStatuses.includes(item.progres_interoperabilityreferralstatus)
               )
@@ -809,8 +819,8 @@ workflows:
             const r = state.data;
             // values differ if status is ...002, decision is ...001, and if status is ...001, decision is ...000
             const status = r.progres_interoperabilityreferralstatus || r.progres_reviewdecision;
-            const case_id = "e20066dd-5ff9-4a9c-95ca-844d91ea1fa8" //r.progres_offlineid;
-            const service_id = r.progres_interoperabilityreferralnumber;
+            const case_id = r.progres_offlineid;
+            const service_id = r.progres_orgreferralid;
             const service_type = r.progres_requestedservice; // proGres service GUID — used to match referral in Primero
             const interoperability_referral_id = r.progres_interoperabilityreferralid; // proGres UUID — used to update status in PING after Primero sync
 
@@ -867,21 +877,29 @@ workflows:
             return state;
           });
 
-          const findReferral = (referrals, service_type_guid) => {
-            const primeroServiceType = reverseServiceMap[service_type_guid];
-            const matches = referrals.filter(r =>
-              r.service_type === primeroServiceType &&
-              r.referred_to_agency === 'UNHCR'
+          // const findReferral = (referrals, service_type_guid) => {
+          //   const primeroServiceType = reverseServiceMap[service_type_guid];
+          //   const matches = referrals.filter(r =>
+          //     r.service_type === primeroServiceType &&
+          //     r.referred_to_agency === 'UNHCR'
+          //   );
+          //   if (matches.length === 1) return matches[0];
+          //   if (matches.length === 0) return null;
+          //   return 'ambiguous';
+          // };
+
+          const findReferral = (referrals, service_id) => {
+            const referral = referrals.find(
+              referral => referral.service_record_id === service_id
             );
-            if (matches.length === 1) return matches[0];
-            if (matches.length === 0) return null;
-            return 'ambiguous';
+            console.log("referrals", referrals)
+            console.log("service_id", service_id)
+            console.log("found", referral)
+            return referral;
           };
 
           each('$.decisionPayload[*]', fn(state => {
-            const { case_id, service_type, interoperability_referral_id, ...decision } = state.data;
-
-            console.log(`Processing decision for case_id: ${case_id}, service_type GUID: ${service_type}`);
+            const { case_id, service_id, interoperability_referral_id, ...decision } = state.data;
 
             return getReferrals({ externalId: 'case_id', id: case_id })(state)
               .then(state => {
@@ -894,29 +912,36 @@ workflows:
                   referred_to_agency: r.referred_to_agency
                 }))));
 
-                // TODO: revert to findReferral() once test data has service_type/referred_to_agency populated,
-                // or once progres_orgreferralid is available from SHP-2796 for exact matching
-                let referral;
-                const hasMatchableFields = referrals.some(r => r.service_type || r.referred_to_agency);
+                // // TODO: revert to findReferral() once test data has service_type/referred_to_agency populated,
+                // // or once progres_orgreferralid is available from SHP-2796 for exact matching
+                // let referral;
+                // const hasMatchableFields = referrals.some(r => r.service_type || r.referred_to_agency);
 
-                if (hasMatchableFields) {
-                  referral = findReferral(referrals, service_type);
-                  if (!referral) {
-                    console.log(`No matching UNHCR referral found for case ${case_id} with service_type ${service_type}. Skipping.`);
-                    return state;
-                  }
-                  if (referral === 'ambiguous') {
-                    console.log(`Multiple UNHCR referrals found for case ${case_id} with same service_type. Cannot determine which to update. Skipping.`);
-                    return state;
-                  }
-                } else {
-                  // TEMPORARY: referral fields not populated in test data, take the only referral available
-                  console.log(`WARNING: Referral fields not available for matching on case ${case_id}. Using first referral as fallback (test mode only).`);
-                  if (referrals.length !== 1) {
-                    console.log(`Cannot use fallback: ${referrals.length} referrals found for case ${case_id}. Skipping.`);
-                    return state;
-                  }
-                  referral = referrals[0];
+                // if (hasMatchableFields) {
+                //   referral = findReferral(referrals, service_type);
+                //   if (!referral) {
+                //     console.log(`No matching UNHCR referral found for case ${case_id} with service_type ${service_type}. Skipping.`);
+                //     return state;
+                //   }
+                //   if (referral === 'ambiguous') {
+                //     console.log(`Multiple UNHCR referrals found for case ${case_id} with same service_type. Cannot determine which to update. Skipping.`);
+                //     return state;
+                //   }
+                // } else {
+                //   // TEMPORARY: referral fields not populated in test data, take the only referral available
+                //   console.log(`WARNING: Referral fields not available for matching on case ${case_id}. Using first referral as fallback (test mode only).`);
+                //   if (referrals.length !== 1) {
+                //     console.log(`Cannot use fallback: ${referrals.length} referrals found for case ${case_id}. Skipping.`);
+                //     return state;
+                //   }
+                //   referral = referrals[0];
+                // }
+
+                const referral = findReferral(referrals, service_id);
+
+                if (!referral) {
+                  console.log(`No referral found for case_id ${case_id}. Skipping update.`);
+                  return state;
                 }
 
                 decision['id'] = referral.id;
@@ -939,8 +964,8 @@ workflows:
                 )(state);
               })
               .catch(error => {
-                console.log({ error });
-                throw new Error(`No case found for ${case_id}. Referral decision cannot be synced.`);
+                console.log(`No case found for ${case_id}. Skipping this referral decision.`);
+                return state;
               });
           }));
       Save-Status-in-Progres:
@@ -1021,7 +1046,7 @@ workflows:
         source_job: Update-Referral-Decision-in-Primero
         target_job: Save-Status-in-Progres
         condition_type: on_job_success
-        enabled: true
+        enabled: false
   Flow1-1.-Send-Referrals-to-Primero:
     name: Flow1-1. Send Referrals to Primero
     jobs:
@@ -2061,20 +2086,6 @@ workflows:
             })),
           }));
 
-          // After job completes successfully, update cursor
-          fn(state => {
-            let lastRunDateTime = state.cases
-              .map(c => c.last_updated_at)
-              .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
-
-            lastRunDateTime =
-              new Date(lastRunDateTime) > new Date()
-                ? lastRunDateTime
-                : new Date().toISOString();
-
-            console.log('Next sync start date:', lastRunDateTime);
-            return { ...state, data: {}, references: [], lastRunDateTime };
-          });
 
 
           fn(state => {
@@ -2102,6 +2113,21 @@ workflows:
                 });
             }
             return { ...state };
+          });
+
+          // After job completes successfully, update cursor
+          fn(state => {
+            let lastRunDateTime = state.cases
+              .map(c => c.last_updated_at)
+              .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+
+            lastRunDateTime =
+              new Date(lastRunDateTime) > new Date()
+                ? lastRunDateTime
+                : new Date().toISOString();
+
+            console.log('Next sync start date:', lastRunDateTime);
+            return { ...state, data: {}, references: [], lastRunDateTime };
           });
 
       Flow2-2-Send-Referral-to-Ping:
@@ -2456,8 +2482,11 @@ workflows:
                       {
                         "Name": "progres_unhcrid",
                         "Value": data.unhcr_individual_no ?? data.unhcr_id_no
+                      },
+                      {
+                        "Name": "progres_offlineid",
+                        "Value": data.case_id
                       }
-
                       ]
                     }
                   ]
