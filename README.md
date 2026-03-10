@@ -61,6 +61,8 @@ The integration is implemented using four OpenFn workflows.
 | Workflow 2.1 | Send referrals from Primero to proGres          | Scheduled |
 | Workflow 2.2 | Send referral decisions from proGres to Primero | Scheduled |
 
+Full documentation details can be [found here](https://drive.google.com/drive/folders/1Y0FGxB3jctjCUo6EtMGp0h46cjBVdudO)
+
 # 6. Workflow Details
 
 ## Workflow 1.1 – Send Referrals to Primero
@@ -69,7 +71,7 @@ The integration is implemented using four OpenFn workflows.
 
 **Purpose**
 
-Retrieves referral interventions from proGres through PING and creates or updates the corresponding cases and services in Primero.
+Retrieves referral interventions from proGres through PING and creates or updates the corresponding cases and services in Primero. The full specification is described [here](https://docs.google.com/document/d/1g1otwtnoddVX0pi8MPZ-tSnFs2H-0MwE/edit?usp=drive_link&ouid=100028693760577730296&rtpof=true&sd=true).
 
 **Trigger**
 
@@ -106,7 +108,7 @@ Scheduled workflow execution.
 
 **Purpose**
 
-Sends referral decisions recorded in Primero back to proGres through the PING ingestion API.
+Sends referral decisions recorded in Primero back to proGres through the PING ingestion API. The full specification is described [here](https://docs.google.com/document/d/1K8PR7a-l3AhL-nSaG6dPtlp2hubQUyPN/edit?usp=drive_link&ouid=100028693760577730296&rtpof=true&sd=true).
 
 **Trigger**
 
@@ -141,7 +143,7 @@ Scheduled workflow execution.
 
 **Purpose**
 
-Retrieves referrals created in Primero and sends them to proGres through PING.
+Retrieves referrals created in Primero and sends them to proGres through PING. The full specification is described [here](https://docs.google.com/document/d/1WVOnuc6XGsUIv-kbWq775K8jstNT_UE4/edit?usp=drive_link&ouid=100028693760577730296&rtpof=true&sd=true).
 
 **Trigger**
 
@@ -177,7 +179,7 @@ Scheduled workflow execution.
 
 **Purpose**
 
-Retrieves referral decisions recorded in proGres and updates the corresponding referrals in Primero.
+Retrieves referral decisions recorded in proGres and updates the corresponding referrals in Primero. The full specification is described [here](https://docs.google.com/document/d/1Nh84EPAxt1EY2fAIGbZz2fh5Mq8nslq8/edit?usp=drive_link&ouid=100028693760577730296&rtpof=true&sd=true).
 
 **Trigger**
 
