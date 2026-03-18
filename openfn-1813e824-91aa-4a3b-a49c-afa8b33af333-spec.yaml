@@ -1,6 +1,7 @@
 name: primero-ping
 description: |
   Primero - PING integration for UNICEF-UNHCR collaboration
+
 collections: null
 credentials:
   hunter@openfn.org-Official-Ping-credentials:
@@ -99,6 +100,7 @@ workflows:
 
           return {decisionRecords:state.decisionRecords, data:{}, references:[]}
           })
+
       Map-decision-to-Primero-payload:
         name: Map decision to Primero payload
         adaptor: '@openfn/language-common@3.2.2'
@@ -150,6 +152,7 @@ workflows:
           fn(state => {
             return { decisionPayload: state.decisionPayload, data: {}, references: [] }
           })
+
       Update-Referral-Decision-in-Primero:
         name: Update Referral Decision in Primero
         adaptor: '@openfn/language-primero@4.0.8'
@@ -227,6 +230,7 @@ workflows:
                 return state;
               });
           }));
+
       Save-Status-in-Progres:
         name: Save Status in Progres
         adaptor: '@openfn/language-ping@1.0.2'
@@ -272,6 +276,7 @@ workflows:
             console.log(`Failed to update PING status. Error: ${error.message}`);
             throw error;
           });
+
     triggers:
       cron:
         type: cron
@@ -290,6 +295,7 @@ workflows:
         condition_label: null
         condition_expression: |
           !state.errors && state.referralIds && state.referralIds.length > 0
+
         enabled: true
       Fetch-full-decision-details->Map-decision-to-Primero-payload:
         source_job: Fetch-full-decision-details
@@ -305,7 +311,7 @@ workflows:
         source_job: Update-Referral-Decision-in-Primero
         target_job: Save-Status-in-Progres
         condition_type: on_job_success
-        enabled: false
+        enabled: true
   Flow1-1.-Send-Referrals-to-Primero:
     name: Flow1-1. Send Referrals to Primero
     jobs:
@@ -767,11 +773,6 @@ workflows:
         cron_expression: '00 00 * * *'
         enabled: false
     edges:
-      cron->Retrieve-pending-referrals:
-        source_trigger: cron
-        target_job: Retrieve-pending-referrals
-        condition_type: always
-        enabled: true
       Retrieve-pending-referrals->Retrieve-full-intervention-details:
         source_job: Retrieve-pending-referrals
         target_job: Retrieve-full-intervention-details
@@ -779,15 +780,21 @@ workflows:
         condition_label: Has pending referrals
         condition_expression: |
           state.data?.RecordCount != null
-        enabled: true
-      Retrieve-full-intervention-details->Send-Referrals-to-Primero:
-        source_job: Retrieve-full-intervention-details
-        target_job: Send-Referrals-to-Primero
-        condition_type: on_job_success
+
         enabled: true
       Send-Referrals-to-Primero->Send-Upload-Status-to-Ping:
         source_job: Send-Referrals-to-Primero
         target_job: Send-Upload-Status-to-Ping
+        condition_type: on_job_success
+        enabled: true
+      cron->Retrieve-pending-referrals:
+        source_trigger: cron
+        target_job: Retrieve-pending-referrals
+        condition_type: always
+        enabled: true
+      Retrieve-full-intervention-details->Send-Referrals-to-Primero:
+        source_job: Retrieve-full-intervention-details
+        target_job: Send-Referrals-to-Primero
         condition_type: on_job_success
         enabled: true
   Flow1-2.-Send-Decision-to-Ping:
@@ -896,6 +903,7 @@ workflows:
           //   console.log('New cursor value:', lastRunDateTime);
           //   return { ...state, data: {}, references: [], lastRunDateTime };
           // });
+
       Get-Decisions-from-Primero:
         name: Get Decisions from Primero
         adaptor: '@openfn/language-primero@3.0.9'
@@ -989,11 +997,6 @@ workflows:
         cron_expression: '0 * * * *'
         enabled: false
     edges:
-      cron->Get-Decisions-from-Primero:
-        source_trigger: cron
-        target_job: Get-Decisions-from-Primero
-        condition_type: always
-        enabled: true
       Get-Decisions-from-Primero->Send-Decision-to-Ping:
         source_job: Get-Decisions-from-Primero
         target_job: Send-Decision-to-Ping
@@ -1002,6 +1005,11 @@ workflows:
         condition_expression: |
           state.decision.length > 0
 
+        enabled: true
+      cron->Get-Decisions-from-Primero:
+        source_trigger: cron
+        target_job: Get-Decisions-from-Primero
+        condition_type: always
         enabled: true
   Flow2-1.-Get-Referrals-from-Primero:
     name: Flow2-1. Get Referrals from Primero
