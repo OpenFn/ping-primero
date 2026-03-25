@@ -404,21 +404,19 @@ workflows:
         credential: rediet@openfn.org-Primero-Gambella
         body: |
           each(
-            '$.interventions[*]',//
+            '$.interventions[*]',
             fn(state => {
               const { data } = state;
               const calculateAge = dob => {
                 const diff = Date.now() - dob.getTime();
                 const age_dt = new Date(diff);
-
-                return Math.abs(age_dt.getUTCFullYear() - 1970); //.toString();
+                return Math.abs(age_dt.getUTCFullYear() - 1970);
               };
 
               const formatDate = (date, format) => {
                 if (!date) return null;
-                date = date.split(/\s|T/g)[0]; // split date by 'T' or by space
-
-                const parts = date.match(/(\d+)/g); // match all digits
+                date = date.split(/\s|T/g)[0];
+                const parts = date.match(/(\d+)/g);
                 if (!parts) return null;
 
                 let year, day;
@@ -444,13 +442,23 @@ workflows:
                 }
               };
 
+              const stripHtml = str =>
+                str
+                  .replace(/<[^>]+>/g, ' ')
+                  .replace(/&nbsp;/g, ' ')
+                  .replace(/&amp;/g, '&')
+                  .replace(/&lt;/g, '<')
+                  .replace(/&gt;/g, '>')
+                  .replace(/\s+/g, ' ')
+                  .trim();
+
               const progres_description = data['progres_interventiontype2.interventiontype.progres_description'];
 
               const serviceMap = {
                 'Alternative Care': 'alternative_care',
                 BID: 'focuses_non_specialized_mhpss_care',
                 BIA: 'focuses_non_specialized_mhpss_care',
-                'Family Tracing and Reunification': 'family_tracing_and_reunification',
+                'Family Tracing and Reunification': 'food',
                 'Advocacy / Direct intervention': 'other_please_specify',
               };
               state.serviceMap = serviceMap;
@@ -458,9 +466,8 @@ workflows:
               const serviceMapArray = Object.keys(serviceMap);
 
               if (!serviceMapArray.includes(progres_description)) {
-                const errMessage = `Service value shared (${progres_description}) with progres_interventionnumber '${data.progres_interventionnumber}'`;
                 throw new Error(
-                  `${errMessage} is not an accepted UNICEF service type.\n\tPlease see the mapping specifications.`
+                  `Service value shared (${progres_description}) with progres_interventionnumber '${data.progres_interventionnumber}' is not an accepted UNICEF service type.\n\tPlease see the mapping specifications.`
                 );
               }
 
@@ -491,13 +498,6 @@ workflows:
                 Zande: 'language5',
               };
 
-              // let lang = [];
-              // lang.push(
-              //   data['progres_language.languages.progres_languagecodeid']
-              //     ? languageMap[data['progres_language.progres_languagecodeidname']] ||
-              //     'language6'
-              //     : undefined
-              // );
               let lang = [];
               if (data._languages && data._languages.length > 0) {
                 lang = data._languages
@@ -506,6 +506,7 @@ workflows:
               } else if (data['progres_language.progres_languagecodeidname']) {
                 lang.push(languageMap[data['progres_language.progres_languagecodeidname']] || 'language6');
               }
+
               const address_current = [
                 data['individuals.progres_coalocationlevel1']?.Name,
                 data['individuals.progres_coalocationlevel2']?.Name,
@@ -514,9 +515,8 @@ workflows:
                 data['individuals.progres_coalocationlevel5']?.Name,
                 data['individuals.progres_coalocationlevel6']?.Name,
               ]
-                .filter(Boolean)  // Removes undefined, null, empty strings
-                .join(' ')        // Joins with single space
-                || null;          // Returns null if completely empty (instead of "")
+                .filter(Boolean)
+                .join(' ') || null;
 
               const progres_sex = data['progres_individual.individuals.progres_sex'];
               const provided =
@@ -527,7 +527,6 @@ workflows:
                   data['progres_individual.individuals.progres_familyname']) !== undefined;
 
               const missingFields = [];
-              // CHECK MISSING FIELDS ==================================
               if (!progres_description)
                 missingFields.push('progres_interventiontype2.interventiontype.progres_description');
               if (!data['progres_individual.individuals.progres_id'])
@@ -545,45 +544,40 @@ workflows:
 
               if (!provided) {
                 throw new Error(
-                  `Intervention referral is missing fields required for sending to Primero: ${missingFields.join(
-                    ','
-                  )}. Please include missing fields and re-send the request`
+                  `Intervention referral is missing fields required for sending to Primero: ${missingFields.join(',')}. Please include missing fields and re-send the request`
                 );
               }
-              // =======================================================
 
               const service_type = data['progres_interventiontype2.interventiontype.progres_description'];
-
               const today = formatDate(new Date().toISOString(), 'YYYY-MM-DD');
 
+              const newService = {
+                service_appointment_date: data.progres_interventionstartdate
+                  ? data.progres_interventionstartdate.split('T')[0]
+                  : null,
+                service_response_day_time: data.progres_primerotransferstatusdate
+                  ? new Date(data.progres_primerotransferstatusdate).toISOString()
+                  : null,
+                service_request_external: true,
+                service_request_title: data['systemuser.title'] || '',
+                service_request_agency: 'UNHCR',
+                service_request_phone: data['systemuser.su.mobilephone'],
+                service_request_email: data['systemuser.su.internalemailaddress'],
+                service_referral_notes: [data.progres_interventiondescription, data.progres_reasonforreferral]
+                  .filter(Boolean)
+                  .map(stripHtml)
+                  .join(', '),
+                service_type: serviceMap[service_type] || 'focuses_non_specialized_mhpss_care',
+                service_implementing_agency: 'UNICEF',
+                service_response_type: 'service_provision',
+                service_referral: 'external_referral',
+                unhcr_referral_status: 'pending',
+                progres_interventionnumber:
+                  data.progres_interventionnumber + ',' + data.progres_lpinterventionid + ',' + data.progres_businessunit,
+              };
+
               const body = {
-                services_section: [
-                  {
-                    service_response_day_time: data.progres_interventionstartdate
-                      ? new Date(data.progres_interventionstartdate).toISOString()
-                      : null,
-                    service_request_external: true, //Confirm primero mapping
-                    service_request_title: data['systemuser.title'] || '',
-                    service_request_agency: 'UNHCR',
-                    service_request_phone: data['systemuser.su.mobilephone'],
-                    service_request_email: data['systemuser.su.internalemailaddress'],
-                    service_referral_notes: [
-                      data.progres_interventiondescription,
-                      data.progres_reasonforreferral,
-                    ]
-                      .filter(Boolean)
-                      .join(',')
-                      .replace(/<\/p>/g, ' ')
-                      .replace(/<p>/g, ' '),
-                    service_type:
-                      serviceMap[service_type] || 'focuses_non_specialized_mhpss_care',
-                    service_implementing_agency: 'UNICEF', //default request for Gambella instead of progres_businessunit
-                    service_response_type: 'service_provision',
-                    service_referral: 'external_referral',
-                    unhcr_referral_status: 'pending',
-                    progres_interventionnumber: data.progres_interventionnumber + "," + data.progres_lpinterventionid + "," + data.progres_businessunit,
-                  },
-                ],
+                services_section: [newService], // used for new case creation
                 unhcr_individual_no: data['progres_individual.individuals.progres_id'],
                 unhcr_id_no: data['progres_individual.progres_registrationgroupidname'],
                 name_first: data['progres_individual.individuals.progres_givenname'],
@@ -597,11 +591,9 @@ workflows:
                 sex: data['progres_individual.individuals.progres_sex'] ? sexMap[progres_sex] : undefined,
                 telephone_current: data['progres_individual.individuals.progres_primaryphonenumber'],
                 address_current,
-                //protection_concerns: protection[0] ? protection : null,
                 language: lang[0] ? lang : null,
                 status: 'open',
                 case_id: data.progres_primeroid ? data.progres_primeroid : undefined,
-                // owned_by: 'primero', //Gambella intake user
                 module_id: 'primeromodule-cp',
               };
 
@@ -609,50 +601,48 @@ workflows:
                 {
                   remote: true,
                   unhcr_individual_no: data['progres_individual.individuals.progres_id'],
-                }, {},
+                },
+                {},
                 next => {
-                  console.log("this is next")
-                  // console.log(next)
+                  // ── NO CASE FOUND ──────────────────────────────────────────────
                   if (next.data.length === 0) {
-                    // Check if proGres has a primeroid - if so, try to find by case_id instead
                     if (data.progres_primeroid) {
-                      console.log(`No case found by unhcr_individual_no, but proGres has primeroid ${data.progres_primeroid}. Attempting update by case_id.`);
-                      // Remove case_id from body to avoid conflict, let Primero generate new one
+                      console.log(
+                        `No case found by unhcr_individual_no, but proGres has primeroid ${data.progres_primeroid}. Creating new case without case_id.`
+                      );
                       const createBody = { ...body };
                       delete createBody.case_id;
                       return createCase(createBody, resp => {
-                        console.log(`New case created for case id:${resp.data.case_id}`);
+                        console.log(`New case created: ${resp.data.case_id}`);
                         return resp;
                       })(next);
                     }
 
                     return createCase(body, resp => {
-                      console.log(`New case created for case id:${resp.data.case_id}`);
-                      return resp;
-                    })(next);
-                    // return createCase(body, resp => {
-                    //   console.log(`New case created for case id:${resp.data.case_id}`);
-                    //   console.log('Full Primero response:', JSON.stringify(resp.data, null, 2));
-
-                    //   return resp;
-                    // })(next);
-                  }
-
-                  if (next.data.length === 1) {
-                    console.log(`Matching Primero case found; updating...`);
-                    return updateCase(next.data[0].id, { data: body }, resp => {
-                      console.log(
-                        `Updated ${resp.data.id} @ ${resp.data.last_updated_at}`
-                      );
+                      console.log(`New case created: ${resp.data.case_id}`);
                       return resp;
                     })(next);
                   }
 
-                  body.case_id = next.data[0].case_id;
-                  console.log(
-                    `Multiple cases found! Upserting first matching case with case id ${body.case_id}`
+                  // ── CASE(S) FOUND — APPEND the new service ─────────────────────
+                  const existingCase = next.data[0];
+                  const existingServices = existingCase.services_section || [];
+
+                  const alreadyExists = existingServices.some(svc =>
+                    svc.progres_interventionnumber?.startsWith(data.progres_interventionnumber)
                   );
-                  return updateCase(next.data[0].id, { data: body }, resp => {
+
+                  if (alreadyExists) {
+                    console.log(`Service for intervention ${data.progres_interventionnumber} already exists. Skipping.`);
+                    return next;
+                  }
+
+                  // Only send the new service — Primero appends via unique_id
+                  const updatedBody = {
+                    services_section: [newService],
+                  };
+
+                  return updateCase(existingCase.id, updatedBody, resp => {
                     console.log(`Updated ${resp.data.id} @ ${resp.data.last_updated_at}`);
                     return resp;
                   })(next);
@@ -660,7 +650,6 @@ workflows:
               )(state);
             })
           );
-
       Retrieve-full-intervention-details:
         name: Retrieve full intervention details
         adaptor: '@openfn/language-ping@latest'
@@ -773,15 +762,6 @@ workflows:
         cron_expression: '00 00 * * *'
         enabled: false
     edges:
-      Retrieve-pending-referrals->Retrieve-full-intervention-details:
-        source_job: Retrieve-pending-referrals
-        target_job: Retrieve-full-intervention-details
-        condition_type: js_expression
-        condition_label: Has pending referrals
-        condition_expression: |
-          state.data?.RecordCount != null
-
-        enabled: true
       Send-Referrals-to-Primero->Send-Upload-Status-to-Ping:
         source_job: Send-Referrals-to-Primero
         target_job: Send-Upload-Status-to-Ping
@@ -796,6 +776,15 @@ workflows:
         source_job: Retrieve-full-intervention-details
         target_job: Send-Referrals-to-Primero
         condition_type: on_job_success
+        enabled: true
+      Retrieve-pending-referrals->Retrieve-full-intervention-details:
+        source_job: Retrieve-pending-referrals
+        target_job: Retrieve-full-intervention-details
+        condition_type: js_expression
+        condition_label: Has pending referrals
+        condition_expression: |
+          state.data?.RecordCount != null
+
         enabled: true
   Flow1-2.-Send-Decision-to-Ping:
     name: Flow1-2. Send Decision to Ping
@@ -817,27 +806,32 @@ workflows:
                   console.log(`Skipping decision for ${d.progres_interventionnumber}: status is pending`);
                   return false;
                 }
-                
+
                 const parts = d.progres_interventionnumber?.split(',') || [];
                 if (parts.length < 3 || !parts[1] || !parts[2]) {
                   console.log(`Discarding old referral for case ${d.case_id}: progres_interventionnumber missing lpInterventionId or businessUnit. Value: "${d.progres_interventionnumber}"`);
                   return false;
                 }
-                
+
                 return true;
               })
               .map(d => {
                 const [, lpInterventionId, businessUnit] = d.progres_interventionnumber.split(',');
                 const currentDate = new Date().toISOString().split('T')[0];
-                
-                const reasonText = d.closure_reason && d.closure_reason !== 'No reason specified.' 
-                  ? `: ${d.closure_reason}` 
+
+                const reasonText = d.closure_reason && d.closure_reason !== 'No reason specified.'
+                  ? `: ${d.closure_reason}`
                   : '';
                 const comment = `Referral ${d.status} by PRIMERO${reasonText}`;
 
                 return {
                   ExternalId: d.case_id,
-                  Attachments: [],
+                  Attachments: [
+                    {
+
+                      "Comment": comment
+                    }
+                  ],
                   Fields: [
                     { Name: 'progres_lpinterventionid', Value: lpInterventionId },
                     { Name: 'progres_businessunit', Value: businessUnit },
@@ -845,7 +839,7 @@ workflows:
                     { Name: 'progres_primerotransferstatusdate', Value: currentDate },
                     { Name: 'progres_primeroid', Value: d.case_id },
                     { Name: 'progres_primerocaseworker', Value: d.primero_user },
-                    { Name: 'progres_comments_displayfield', Value: comment }
+                 //   { Name: 'progres_comments_displayfield', Value: comment }
                   ]
                 };
               });
@@ -997,6 +991,11 @@ workflows:
         cron_expression: '0 * * * *'
         enabled: false
     edges:
+      cron->Get-Decisions-from-Primero:
+        source_trigger: cron
+        target_job: Get-Decisions-from-Primero
+        condition_type: always
+        enabled: true
       Get-Decisions-from-Primero->Send-Decision-to-Ping:
         source_job: Get-Decisions-from-Primero
         target_job: Send-Decision-to-Ping
@@ -1005,11 +1004,6 @@ workflows:
         condition_expression: |
           state.decision.length > 0
 
-        enabled: true
-      cron->Get-Decisions-from-Primero:
-        source_trigger: cron
-        target_job: Get-Decisions-from-Primero
-        condition_type: always
         enabled: true
   Flow2-1.-Get-Referrals-from-Primero:
     name: Flow2-1. Get Referrals from Primero
