@@ -46,7 +46,7 @@ The integration relies on **PING middleware APIs** for controlled data exchange 
 | ------- | ------------------------------ | --------------------------------------------------- |
 | PING    | API credentials / Bearer Token | Used by OpenFn to retrieve and update proGres data  |
 | Primero | API token                      | Used to create and update case and referral records |
-| OpenFn  | Platform credentials           | Workflow execution environment                      |
+| [OpenFn](https://docs.openfn.org)  | Platform credentials           | Integration platform used to automate & orchestrate data exchange workflows |
 
 Sensitive credentials are managed through OpenFn credential management and are not stored directly in workflow code.
 
@@ -56,10 +56,10 @@ The integration is implemented using four OpenFn workflows.
 
 | Workflow     | Purpose                                         | Trigger   |
 | ------------ | ----------------------------------------------- | --------- |
-| Workflow 1.1 | Send referrals from proGres to Primero          | Scheduled |
-| Workflow 1.2 | Send referral decisions from Primero to proGres | Scheduled |
-| Workflow 2.1 | Send referrals from Primero to proGres          | Scheduled |
-| Workflow 2.2 | Send referral decisions from proGres to Primero | Scheduled |
+| Workflow 1.1 | Send referrals from proGres to Primero          | Scheduled Cron |
+| Workflow 1.2 | Send referral decisions from Primero to proGres | Scheduled Cron |
+| Workflow 2.1 | Send referrals from Primero to proGres          | Scheduled Cron |
+| Workflow 2.2 | Send referral decisions from proGres to Primero | Scheduled Cron |
 
 Full documentation details can be [found here](https://drive.google.com/drive/folders/1Y0FGxB3jctjCUo6EtMGp0h46cjBVdudO)
 
@@ -238,3 +238,6 @@ Key monitoring points:
 | Name | Email | Role |
 | ---- | ----- | ---- |
 | TODO | TODO  | TODO |
+
+### OpenFn Team
+Post on [community.openfn.org](https://community.openfn.org) or contact `support@openfn.org` for private queries. 
