@@ -259,6 +259,8 @@ These workflows transmit refugee PII across three systems, full name, date of bi
 Confirm that data processing agreements between UNHCR and UNICEF cover the specific fields in scope, and that OpenFn's role as a data processor is reflected in those
 agreements.
 
+Full Security and Go-Live Checklist can be found [👉 here](https://docs.google.com/document/d/1FPspJEJLW6wVQOY6Glq5Wc0xmf85gbIt/edit)
+
 ## 11. Solution Assumptions
 
 **Flow 1-1**: The PING endpoint SHP-2358 may return multiple rows per intervention due to joins on language and specific needs. The workflow deduplicates these before sending to Primero. If SHP-2358 changes its response structure, deduplication will produce incorrect results without erroring.
