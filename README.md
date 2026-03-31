@@ -68,6 +68,7 @@ Full documentation details can be [found here](https://drive.google.com/drive/fo
 ## Workflow 1.1 – Send Referrals to Primero
 
 [OpenFn Workflow Link](https://app.openfn.org/projects/1813e824-91aa-4a3b-a49c-afa8b33af333/w/5d2383d8-5f58-451e-aec9-5709e403eea7)
+<img width="1314" height="849" alt="image" src="https://github.com/user-attachments/assets/3add88f5-299d-4df2-b187-29e899b34d11" />
 
 **Purpose**
 
@@ -105,6 +106,7 @@ Scheduled workflow execution.
 ## Workflow 1.2 – Send Decision to PING
 
 [OpenFn Workflow Link](https://app.openfn.org/projects/1813e824-91aa-4a3b-a49c-afa8b33af333/w/32d49f20-82a0-464f-b05e-fbabd22ce202)
+<img width="1314" height="849" alt="image" src="https://github.com/user-attachments/assets/63f8a716-7ba2-4f55-b903-733b34f9ccb7" />
 
 **Purpose**
 
@@ -140,6 +142,7 @@ Scheduled workflow execution.
 ## Workflow 2.1 – Get Referrals from Primero
 
 [OpenFn Workflow Link](https://app.openfn.org/projects/1813e824-91aa-4a3b-a49c-afa8b33af333/w/360b3fea-569a-401b-b7d4-3a68ad6f575a)
+<img width="1314" height="849" alt="image" src="https://github.com/user-attachments/assets/5f3b5fde-5550-4527-9b92-173bd7dd7480" />
 
 **Purpose**
 
@@ -176,6 +179,7 @@ Scheduled workflow execution.
 ## Workflow 2.2 – Update Referral Decision in Primero
 
 [OpenFn Workflow Link](https://app.openfn.org/projects/1813e824-91aa-4a3b-a49c-afa8b33af333/w/6a3a0cce-79bb-4a25-8fb2-40a9ff505818)
+<img width="1314" height="849" alt="image" src="https://github.com/user-attachments/assets/73b8e34f-32ec-47ea-92e9-9c8eb19001d9" />
 
 **Purpose**
 
@@ -225,7 +229,61 @@ Key monitoring points:
 * Transaction IDs returned by ingestion APIs
 * Verification that records are created or updated in the destination system
 
-## 9. Contacts
+## 9. Configuration Considerations
+When implementing this interoperability solution for a new Primero/Progres instances, implementers and system administrators should consider the following:
+
+*  Every PING API call carries three identifiers, `ShippingProcessId`, `PartnerId`, and `InteropId`, that are specific to this UNHCR-UNICEF deployment. Before deploying elsewhere, all of these need to be replaced with values issued by PING for the new environment. The partner ID also appears directly in the ingestion endpoint URL (`/api/ingestion/v2/PNR-1363/data`), so it needs updating there too, not just in the request body.
+
+*  Two mappings translate service types between Primero and proGres. Both directions are hardcoded with proGres GUIDs that belong to this specific proGres installation. A
+different country's proGres instance will have different GUIDs, and there's no validation wrong values will be accepted silently. These need to be verified against
+the target environment before go-live.
+
+*  Flow 1-1 only accepts five proGres intervention type descriptions. Anything outside that list throws an error. If the new deployment's proGres uses different terminology,
+this map needs updating or referrals will fail on arrival.
+
+*  The language lookup keys (e.g. `language1`, `language2`) are specific to this Primero instance's configuration. A different Primero deployment will almost certainly use
+different keys. Both the inbound and outbound language maps need replacing.
+
+*  Four values also need a human decision before go-live: the fallback CPIMS admin email hardcoded in Flow 2-1, the two proGres organization GUIDs hardcoded in Flow 2-1
+(`progres_businessunit` and `progres_organizationfrom`), and the `module_id` set to `primeromodule-cp` in Flow 1-1. None of these will cause an immediate error if left
+unchanged, they'll just behave incorrectly in production.
+
+## 10. Security & Compliance
+
+The OpenFn platform complies with the **UNICEF CLASS I System Security Requirements**. Beyond meeting these baseline requirements, we would like to draw the attention to the
+fact that OpenFn is not a standalone system, but rather a system which is carefully configured by UNICEF, OpenFn, or UNICEF's partners to comply with project-level security requirements and to connect with other systems in the UNICEF ecosystem (such as Primero). OFG implementation consultants must support these partners to ensure the
+OpenFn implementation is in compliance with relevant security requirements and adhering to best practices. See the below checklist for project-specific implementation &
+security considerations.
+
+These workflows transmit refugee PII across three systems, full name, date of birth, sex, UNHCR ID, phone, address, and protection concerns including SGBV indicators.
+Confirm that data processing agreements between UNHCR and UNICEF cover the specific fields in scope, and that OpenFn's role as a data processor is reflected in those
+agreements.
+
+## 11. Solution Assumptions
+
+**Flow 1-1**: The PING endpoint SHP-2358 may return multiple rows per intervention due to joins on language and specific needs. The workflow deduplicates these before sending to Primero. If SHP-2358 changes its response structure, deduplication will produce incorrect results without erroring.
+
+If more than one Primero case matches on `unhcr_individual_no`, only the first result is used with no warning.
+
+**Flow 1-2**: If a service's `progres_interventionnumber` doesn't follow the expected comma-delimited format (intervention number, LP intervention ID, business unit), the
+record is dropped with a log message and never retried. This will quietly discard any referral created before the composite format was introduced.
+
+**Flow 2-1**
+
+Cases are filtered to those where at least one service has `service_implementing_agency === 'UNHCR'`, exact case match. A Primero instance
+configured with lowercase or mixed-case values will result in all referrals being
+silently excluded.
+
+When a caseworker's Primero profile is incomplete, the workflow silently substitutes the CPIMS admin's contact details — name, email, and phone — in the referral sent to
+proGres. The receiving party in proGres has no indication that this substitution
+occurred.
+
+If a Primero `service_type` value isn't found in the service map, the workflow sends the legal support GUID to proGres with no warning. A misconfigured or extended Primero
+lookup list will produce silent mismatch in proGres.
+
+**Flow 2-2**: The `statusText()` function defaults anything that isn't explicitly `125080002` to `"accepted"`. If proGres introduces a new status code, it will be written to Primero as an acceptance.
+
+## 12. Contacts
 
 ### UNHCR Team
 
