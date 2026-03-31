@@ -6,7 +6,7 @@
   "color": null,
   "concurrency": 4,
   "inserted_at": "2026-01-14T15:39:02Z",
-  "updated_at": "2026-03-31T19:41:41Z",
+  "updated_at": "2026-03-31T20:41:38Z",
   "parent_id": null,
   "scheduled_deletion": null,
   "history_retention_period": 365,
@@ -44,9 +44,7 @@
       "owner": "rediet@openfn.org"
     }
   },
-  "allow_support_access": true,
   "collections": {},
-  "requires_mfa": false,
   "workflows": {
     "Flow1-1.-Send-Referrals-to-Primero": {
       "id": "5d2383d8-5f58-451e-aec9-5709e403eea7",
@@ -305,7 +303,7 @@
       },
       "concurrency": null,
       "inserted_at": "2026-02-12T14:48:21Z",
-      "updated_at": "2026-03-24T11:19:29Z",
+      "updated_at": "2026-03-31T20:41:38Z",
       "jobs": {
         "Fetch-decision-records-from-proGres-via-PING": {
           "id": "0adacab6-1f72-4f89-8f43-cfefc47e7fdb",
@@ -351,13 +349,16 @@
           "cron_expression": "0 0 * * *"
         }
       },
-      "lock_version": 78,
+      "lock_version": 80,
       "deleted_at": null,
       "version_history": [
         "app:8fc457e96157",
         "cli:a6339b73d6cb",
-        "app:9e139759f2e4"
+        "app:9f678067b4e7",
+        "cli:9e139759f2e4"
       ]
     }
-  }
+  },
+  "allow_support_access": true,
+  "requires_mfa": false
 }
