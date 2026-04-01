@@ -120,17 +120,14 @@ workflows:
                 return "rejected"
               default:
                 return "accepted"
-
             }
           }
 
           each('$.decisionRecords[*]', fn(state => {
             const r = state.data;
-            // values differ if status is ...002, decision is ...001, and if status is ...001, decision is ...000
             const status = r.progres_interoperabilityreferralstatus || r.progres_reviewdecision;
             const case_id = r.progres_offlineid;
             const service_id = r.progres_orgreferralid;
-            const service_type = r.progres_requestedservice; // proGres service GUID — used to match referral in Primero
             const interoperability_referral_id = r.progres_interoperabilityreferralid; // proGres UUID — used to update status in PING after Primero sync
 
             const payload = {
@@ -141,7 +138,7 @@ workflows:
               "record_type": "case",
               "status": statusText(status),
               "rejected_reason": statusText(status) === "rejected"
-                ? (r.progres_interoperabiltyreferralrejectionreasonname || "Rejected in proGres (no reason provided)")
+                ? `${r.progres_interoperabiltyreferralrejectionreasonname || "Rejected in proGres (no reason provided)"} — ${r.progres_interoperabilityreferralrejectionomment || "No comment provided"}`
                 : null
             }
 
@@ -213,9 +210,9 @@ workflows:
 
                 return updateReferral(
                   {
-                    caseExternalId: 'case_id',   // was: externalId
-                    caseId: case_id,             // was: id (and was being set to the case_id)
-                    id: referral.id,             // was: referral_id
+                    caseExternalId: 'case_id',
+                    caseId: case_id,
+                    id: referral.id,
                     data: decision,
                   },
                   state => {
@@ -230,7 +227,6 @@ workflows:
                 return state;
               });
           }));
-
       Save-Status-in-Progres:
         name: Save Status in Progres
         adaptor: '@openfn/language-ping@1.0.2'
@@ -265,22 +261,32 @@ workflows:
             return state;
           });
 
-          http.post('/api/ingestion/v2/PNR-1363/data', state => ({
-            "ShippingProcessId": "SHP-2284",
-            "InteropId": "INT-1436",
-            "Data": state.pingStatusPayloads
-          })).then(state => {
-            console.log(`Status updated to Synced with PRIMERO for ${state.pingStatusPayloads.length} referral(s)`);
-            return state;
-          }).catch(error => {
-            console.log(`Failed to update PING status. Error: ${error.message}`);
-            throw error;
+          fn(state => {
+            if (state.pingStatusPayloads.length === 0) {
+              console.log('No referrals to mark as synced in PING. Skipping.');
+              return state;
+            }
+
+            return http.post('/api/ingestion/v2/PNR-1363/data', state => ({
+              "ShippingProcessId": "SHP-2284",
+              "InteropId": "INT-1436",
+              "Data": state.pingStatusPayloads
+            }))(state)
+              .then(state => {
+                console.log(`Status updated to Synced with PRIMERO for ${state.pingStatusPayloads.length} referral(s)`);
+                return state;
+              })
+              .catch(error => {
+                console.log(`Failed to update PING status. Error: ${error.message}`);
+                throw error;
+              });
           });
 
     triggers:
       cron:
         type: cron
         cron_expression: '0 0 * * *'
+        cron_cursor_job: Fetch-decision-records-from-proGres-via-PING
         enabled: false
     edges:
       cron->Fetch-decision-records-from-proGres-via-PING:
@@ -650,6 +656,7 @@ workflows:
               )(state);
             })
           );
+
       Retrieve-full-intervention-details:
         name: Retrieve full intervention details
         adaptor: '@openfn/language-ping@latest'
@@ -760,8 +767,18 @@ workflows:
       cron:
         type: cron
         cron_expression: '00 00 * * *'
+        cron_cursor_job: Retrieve-pending-referrals
         enabled: false
     edges:
+      Retrieve-pending-referrals->Retrieve-full-intervention-details:
+        source_job: Retrieve-pending-referrals
+        target_job: Retrieve-full-intervention-details
+        condition_type: js_expression
+        condition_label: Has pending referrals
+        condition_expression: |
+          state.data?.RecordCount != null
+
+        enabled: true
       Send-Referrals-to-Primero->Send-Upload-Status-to-Ping:
         source_job: Send-Referrals-to-Primero
         target_job: Send-Upload-Status-to-Ping
@@ -776,15 +793,6 @@ workflows:
         source_job: Retrieve-full-intervention-details
         target_job: Send-Referrals-to-Primero
         condition_type: on_job_success
-        enabled: true
-      Retrieve-pending-referrals->Retrieve-full-intervention-details:
-        source_job: Retrieve-pending-referrals
-        target_job: Retrieve-full-intervention-details
-        condition_type: js_expression
-        condition_label: Has pending referrals
-        condition_expression: |
-          state.data?.RecordCount != null
-
         enabled: true
   Flow1-2.-Send-Decision-to-Ping:
     name: Flow1-2. Send Decision to Ping
@@ -989,13 +997,9 @@ workflows:
       cron:
         type: cron
         cron_expression: '0 * * * *'
+        cron_cursor_job: Get-Decisions-from-Primero
         enabled: false
     edges:
-      cron->Get-Decisions-from-Primero:
-        source_trigger: cron
-        target_job: Get-Decisions-from-Primero
-        condition_type: always
-        enabled: true
       Get-Decisions-from-Primero->Send-Decision-to-Ping:
         source_job: Get-Decisions-from-Primero
         target_job: Send-Decision-to-Ping
@@ -1004,6 +1008,11 @@ workflows:
         condition_expression: |
           state.decision.length > 0
 
+        enabled: true
+      cron->Get-Decisions-from-Primero:
+        source_trigger: cron
+        target_job: Get-Decisions-from-Primero
+        condition_type: always
         enabled: true
   Flow2-1.-Get-Referrals-from-Primero:
     name: Flow2-1. Get Referrals from Primero
@@ -1569,6 +1578,7 @@ workflows:
       cron:
         type: cron
         cron_expression: '0 * * * *'
+        cron_cursor_job: Get-Referrals-from-Primero
         enabled: false
     edges:
       cron->Get-Referrals-from-Primero:
