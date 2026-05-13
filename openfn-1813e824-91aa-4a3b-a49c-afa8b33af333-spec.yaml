@@ -13,6 +13,9 @@ credentials:
   hunter@openfn.org-Primero-PING:
     name: Primero PING
     owner: hunter@openfn.org
+  rediet@openfn.org-Invalid-Credential-PING:
+    name: Invalid Credential PING
+    owner: rediet@openfn.org
   rediet@openfn.org-Ping-Credential-Rediet:
     name: Ping Credential Rediet
     owner: rediet@openfn.org
@@ -39,10 +42,6 @@ workflows:
             "InteropID": "INT-1436",
             "APIVersion": "V3",
             "QueryParameters": [
-              // {
-              // "ParameterName": "{progres_interoperabilityreferralstatus}",
-              // "Value": "[125080001, 125080002]"
-              // }
             ]
           });
 
@@ -73,10 +72,10 @@ workflows:
         adaptor: '@openfn/language-ping@1.0.1'
         credential: hunter@openfn.org-Official-Ping-credentials
         body: |
-          fn(state =>{
+          fn(state => {
 
             state.decisionRecords = [];
-          return state
+            return state
           })
 
           each('$.referralIds[*]', http.post('/primes/fetch/paging/v3/retrievedatawithpaging', {
@@ -86,19 +85,19 @@ workflows:
             "APIVersion": "V3",
             "QueryParameters": [
               {
-              "ParameterName": "{record_ids}",
-              "Value": `${[$.data]}`
+                "ParameterName": "{record_ids}",
+                "Value": `${[$.data]}`
               }
             ]
-          }).then(state =>{
+          }).then(state => {
 
             state.decisionRecords.push(state.data.Data[0])
             return state
           }))
 
-          fn(state =>{
+          fn(state => {
 
-          return {decisionRecords:state.decisionRecords, data:{}, references:[]}
+            return { decisionRecords: state.decisionRecords, data: {}, references: [] }
           })
 
       Map-decision-to-Primero-payload:
@@ -120,17 +119,14 @@ workflows:
                 return "rejected"
               default:
                 return "accepted"
-
             }
           }
 
           each('$.decisionRecords[*]', fn(state => {
             const r = state.data;
-            // values differ if status is ...002, decision is ...001, and if status is ...001, decision is ...000
             const status = r.progres_interoperabilityreferralstatus || r.progres_reviewdecision;
             const case_id = r.progres_offlineid;
             const service_id = r.progres_orgreferralid;
-            const service_type = r.progres_requestedservice; // proGres service GUID — used to match referral in Primero
             const interoperability_referral_id = r.progres_interoperabilityreferralid; // proGres UUID — used to update status in PING after Primero sync
 
             const payload = {
@@ -141,7 +137,7 @@ workflows:
               "record_type": "case",
               "status": statusText(status),
               "rejected_reason": statusText(status) === "rejected"
-                ? (r.progres_interoperabiltyreferralrejectionreasonname || "Rejected in proGres (no reason provided)")
+                ? `${r.progres_interoperabiltyreferralrejectionreasonname || "Rejected in proGres (no reason provided)"} — ${r.progres_interoperabilityreferralrejectionomment || "No comment provided"}`
                 : null
             }
 
@@ -213,9 +209,9 @@ workflows:
 
                 return updateReferral(
                   {
-                    caseExternalId: 'case_id',   // was: externalId
-                    caseId: case_id,             // was: id (and was being set to the case_id)
-                    id: referral.id,             // was: referral_id
+                    caseExternalId: 'case_id',
+                    caseId: case_id,
+                    id: referral.id,
                     data: decision,
                   },
                   state => {
@@ -230,7 +226,6 @@ workflows:
                 return state;
               });
           }));
-
       Save-Status-in-Progres:
         name: Save Status in Progres
         adaptor: '@openfn/language-ping@1.0.2'
@@ -265,22 +260,32 @@ workflows:
             return state;
           });
 
-          http.post('/api/ingestion/v2/PNR-1363/data', state => ({
-            "ShippingProcessId": "SHP-2284",
-            "InteropId": "INT-1436",
-            "Data": state.pingStatusPayloads
-          })).then(state => {
-            console.log(`Status updated to Synced with PRIMERO for ${state.pingStatusPayloads.length} referral(s)`);
-            return state;
-          }).catch(error => {
-            console.log(`Failed to update PING status. Error: ${error.message}`);
-            throw error;
+          fn(state => {
+            if (state.pingStatusPayloads.length === 0) {
+              console.log('No referrals to mark as synced in PING. Skipping.');
+              return state;
+            }
+
+            return http.post('/api/ingestion/v2/PNR-1363/data', state => ({
+              "ShippingProcessId": "SHP-2284",
+              "InteropId": "INT-1436",
+              "Data": state.pingStatusPayloads
+            }))(state)
+              .then(state => {
+                console.log(`Status updated to Synced with PRIMERO for ${state.pingStatusPayloads.length} referral(s)`);
+                return state;
+              })
+              .catch(error => {
+                console.log(`Failed to update PING status. Error: ${error.message}`);
+                throw error;
+              });
           });
 
     triggers:
       cron:
         type: cron
         cron_expression: '0 0 * * *'
+        cron_cursor_job: Fetch-decision-records-from-proGres-via-PING
         enabled: false
     edges:
       cron->Fetch-decision-records-from-proGres-via-PING:
@@ -344,8 +349,6 @@ workflows:
         credential: hunter@openfn.org-Official-Ping-credentials
         body: |
           fn(state => {
-
-
             state.data = state.interventions.map(item => {
 
               return {
@@ -377,12 +380,6 @@ workflows:
                 ]
               }
             })
-
-            // console.log({ data: state.data })
-
-            // console.log(
-            // 	`Sending success message to Ping for case_id ${data.case_id} and progres_interventionnumber ${data.progres_interventionnumber}`
-            // );
 
             return state;
           });
@@ -650,35 +647,12 @@ workflows:
               )(state);
             })
           );
+
       Retrieve-full-intervention-details:
         name: Retrieve full intervention details
         adaptor: '@openfn/language-ping@latest'
         credential: hunter@openfn.org-Official-Ping-credentials
         body: |
-          // fn(state => {
-          //   const { Data } = state.data;
-          //   state.referrals = Data;
-          //   state.interventions = [];
-          //   return state
-          // })
-          // each('$.referrals[*]', http.post('/primes/fetch/paging/v3/retrievedatawithpaging', {
-          //   "ShippingProcessId": "SHP-2358", // Retrieve referral records from proGres deliveries table, interventions, individuals
-          //   "PartnerId": "PNR-1363",
-          //   "InteropID": "INT-1436",
-          //   "APIVersion": "V3",
-          //   "QueryParameters": [
-          //     {
-          //       "ParameterName": "{record_ids}",
-          //       "Value": state => state.data.progres_lpinterventionid //interventionNumber
-          //     }
-          //   ]
-          // }).then(state => {
-
-          //   const data = state.data.Data.map(item => ({ ...item, progres_lpinterventionid: state.referrals[state.index].progres_lpinterventionid }));
-
-          //   state.interventions.push(...data)
-          //   return state
-          // }));
           fn(state => {
             const { Data } = state.data;
             state.referrals = Data;
@@ -760,6 +734,7 @@ workflows:
       cron:
         type: cron
         cron_expression: '00 00 * * *'
+        cron_cursor_job: Retrieve-pending-referrals
         enabled: false
     edges:
       Send-Referrals-to-Primero->Send-Upload-Status-to-Ping:
@@ -884,20 +859,6 @@ workflows:
             return state;
           });
 
-          // fn(state => {
-          //   let lastRunDateTime = state.referralsToSend
-          //     .map(c => c.last_updated_at)
-          //     .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
-
-          //   lastRunDateTime =
-          //     new Date(lastRunDateTime) > new Date()
-          //       ? lastRunDateTime
-          //       : new Date().toISOString();
-
-          //   console.log('New cursor value:', lastRunDateTime);
-          //   return { ...state, data: {}, references: [], lastRunDateTime };
-          // });
-
       Get-Decisions-from-Primero:
         name: Get Decisions from Primero
         adaptor: '@openfn/language-primero@3.0.9'
@@ -989,6 +950,7 @@ workflows:
       cron:
         type: cron
         cron_expression: '0 * * * *'
+        cron_cursor_job: Get-Decisions-from-Primero
         enabled: false
     edges:
       cron->Get-Decisions-from-Primero:
@@ -1040,8 +1002,6 @@ workflows:
               )
             }
           })
-
-
 
           // Get referral details for each UNCHR case which have been created since the last run
           each(
@@ -1569,6 +1529,7 @@ workflows:
       cron:
         type: cron
         cron_expression: '0 * * * *'
+        cron_cursor_job: Get-Referrals-from-Primero
         enabled: false
     edges:
       cron->Get-Referrals-from-Primero:

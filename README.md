@@ -110,6 +110,7 @@ Find both data flow diagrams [here](https://docs.google.com/presentation/d/1S_Bu
 ### Workflow 1.1 – Send Referrals to Primero
 
 [OpenFn Workflow Link](https://app.openfn.org/projects/1813e824-91aa-4a3b-a49c-afa8b33af333/w/5d2383d8-5f58-451e-aec9-5709e403eea7)
+<img width="1314" height="849" alt="image" src="https://github.com/user-attachments/assets/3add88f5-299d-4df2-b187-29e899b34d11" />
 
 <img width="1314" height="849" alt="Workflow 1.1 canvas" src="https://github.com/user-attachments/assets/3add88f5-299d-4df2-b187-29e899b34d11" />
 
@@ -151,6 +152,7 @@ Scheduled workflow execution.
 ### Workflow 1.2 – Send Decision to PING
 
 [OpenFn Workflow Link](https://app.openfn.org/projects/1813e824-91aa-4a3b-a49c-afa8b33af333/w/32d49f20-82a0-464f-b05e-fbabd22ce202)
+<img width="1314" height="849" alt="image" src="https://github.com/user-attachments/assets/63f8a716-7ba2-4f55-b903-733b34f9ccb7" />
 
 <img width="1314" height="849" alt="Workflow 1.2 canvas" src="https://github.com/user-attachments/assets/63f8a716-7ba2-4f55-b903-733b34f9ccb7" />
 
@@ -190,6 +192,7 @@ Scheduled workflow execution.
 ### Workflow 2.1 – Get Referrals from Primero
 
 [OpenFn Workflow Link](https://app.openfn.org/projects/1813e824-91aa-4a3b-a49c-afa8b33af333/w/360b3fea-569a-401b-b7d4-3a68ad6f575a)
+<img width="1314" height="849" alt="image" src="https://github.com/user-attachments/assets/5f3b5fde-5550-4527-9b92-173bd7dd7480" />
 
 <img width="1314" height="849" alt="Workflow 2.1 canvas" src="https://github.com/user-attachments/assets/5f3b5fde-5550-4527-9b92-173bd7dd7480" />
 
@@ -230,6 +233,7 @@ Scheduled workflow execution.
 ### Workflow 2.2 – Update Referral Decision in Primero
 
 [OpenFn Workflow Link](https://app.openfn.org/projects/1813e824-91aa-4a3b-a49c-afa8b33af333/w/6a3a0cce-79bb-4a25-8fb2-40a9ff505818)
+<img width="1314" height="849" alt="image" src="https://github.com/user-attachments/assets/73b8e34f-32ec-47ea-92e9-9c8eb19001d9" />
 
 <img width="1314" height="849" alt="Workflow 2.2 canvas" src="https://github.com/user-attachments/assets/73b8e34f-32ec-47ea-92e9-9c8eb19001d9" />
 
