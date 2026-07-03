@@ -425,13 +425,13 @@ Full Security and Go-Live Checklist: [view here](https://docs.google.com/documen
 
 | Name | Email | Role |
 | ---- | ----- | ---- |
-| TODO | TODO  | TODO |
+| Jessica Stuart-Clark | stuartcl@unhcr.org  | Child Protection Officer |
 
 ### UNICEF Team
 
 | Name | Email | Role |
 | ---- | ----- | ---- |
-| TODO | TODO  | TODO |
+| Jan Panchalingam | jpanchalingam@unicef.org  | Primero Lead |
 
 ### OpenFn
 
